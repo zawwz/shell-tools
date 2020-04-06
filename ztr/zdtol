@@ -1,0 +1,76 @@
+#!/bin/sh
+
+usage () {
+  echo "zdtol [options] <name>"
+  echo "  Searches a label for partition or disk /dev/<name>"
+  echo "  Options:  "
+  echo "    -h          Show this message then exit"
+  echo "    -d          Discard prefix (/dev/)"
+  echo "    -n <num>    Show only nth label"
+}
+
+error () {
+    printf "\033[1;31m%s\033[0m\n" "$1" >&2
+}
+
+while getopts ":hdn:" opt;
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    n)
+      if ! echo "$OPTARG" | grep -Eq '^[0-9]+$'
+      then
+        error "n argument has to be an integer"
+        exit 2
+      fi
+      if [ -z "$OPTARG" ]
+      then
+        error "n needs an argument"
+        exit 2
+      fi
+      if [ "$OPTARG" -lt 1 ]
+      then
+        error "argument has to be greater than 0"
+        exit 2
+      fi
+      _arg_n=$OPTARG
+      _opt_n=y
+      ;;
+    d)
+      _opt_d=y
+      ;;
+    \?)
+      echo "Uknown option: $OPTARG" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+if [ $# -le 0 ]
+then
+  usage
+  exit 2
+fi
+
+_LIST=$(lsblk -lnio NAME,LABEL | tr -s ' ')
+
+for _I in "$@"
+do
+  if [ -n "$_opt_d" ] ; then
+    _I=$(echo "$_I" | cut -d'/' -f3)
+  fi
+  _ret=$(echo "$_LIST" | grep "$_I" | tr -s ' ' | cut -d' ' -f2- | sed '/^[[:space:]]*$/d')
+  if [ -n "$_opt_n" ] ; then
+    echo "$_ret" | cut -d'\n' -f"$_arg_n"
+  else
+    echo "$_ret"
+  fi
+done
+
+exit 0

@@ -1,0 +1,132 @@
+#!/bin/bash
+
+config_file="/usr/share/z/config/zgoc.conf"
+card_name=$( grep "GPU_NAME=" "$config_file" | cut -d '=' -f2-)
+pci_id=$(grep "GPU_PCI_ID=" "$config_file" | cut -d '=' -f2-)
+profile_path=$(grep "FANC_PROFILE_PATH=" "$config_file" | cut -d '=' -f2-)
+default_profile=$(grep "FANC_DEFAULT_PROFILE=" "$config_file" | cut -d '=' -f2-)
+time_interval=$(grep "FANC_TIME_INTERVAL=" "$config_file" | cut -d '=' -f2-)
+
+temps=( 50  60  70  80  85  90  95  ) # in °C
+fans=(   0  15  30  40  55  75  100 ) # in %
+
+if [ "${#temps[@]}" -ne "${#fans[@]}" ]
+then
+  error "Amount of temperature and pwm values does not match"
+  exit 30
+fi
+
+error () {
+    printf "\033[1;31m%s\033[0m\n" "$1" >&2
+}
+
+file_report ()
+{
+  if [ -f "$(pwd)/$1" ]
+  then
+    echo -n "$(pwd)/$1 = "
+    cat "$(pwd)/$1"
+  elif [ -f "$1" ]
+  then
+    echo -n "$1 = "
+    cat "$1"
+  else
+    error "File $1 from $(pwd) unaccessible"
+  fi
+}
+
+file_write ()
+{
+  if ! echo "$1" > "$2"
+  then
+    error "Error writing to $2 from $(pwd)"
+    exit 12
+  fi
+  file_report "$2"
+}
+
+_stop() {
+  echo ""
+  file_write 2 pwm1_enable
+  exit
+}
+
+if [[ $(lspci | grep -c VGA) -gt 1 ]]
+then
+  if [[ -z "$card_name" ]] && [[ -z "$pci_id" ]] ; then
+    error "Several GPUs are present and no GPU is specified"
+    exit 20
+  fi
+  if [ -z "$pci_id" ] ; then
+    pci_id=$(lspci | grep VGA | grep "$card_name" | cut -d ' ' -f1)
+    if [ "$(echo "$pci_id" | wc -l)" -gt 1 ] ; then
+      error "More than one name match"
+      exit 21
+    elif [ "$(echo "$pci_id" | wc -l)" -lt 1 ] ; then
+      error "No name match"
+      exit 22
+    fi
+  fi
+  cd /sys/class/drm || exit
+
+  if ! cd "$(ls -l card? | grep "$pci_id" | tr -s ' ' | cut -d ' ' -f9)"
+  then
+    error "Error finding pci device"
+    echo 23
+  fi
+else
+  cd "$(find /sys/class/drm/card? | head -n1)" || exit
+fi
+echo -n "Device at "
+pwd
+cd "device/hwmon/$(ls device/hwmon)" || exit
+
+if [ $UID -ne 0 ]
+then
+  echo "Root privileges required"
+  exit 10
+fi
+
+if [ ! -f pwm1 ]
+then
+  error "PWM not available on this device"
+  exit 11
+fi
+
+trap '_stop' SIGINT
+
+file_write 1 pwm1_enable
+
+while true
+do
+  temp=$(zgpu -g0 -Wnt | cut -d '.' -f1)
+  I=1
+  if [ "$temp" -lt "${temps[0]}" ]
+  then
+    fan=${fans[0]}
+  else
+    while [[ $I -lt "${#temps[@]}" ]]
+    do
+      if [ "$temp" -lt "${temps[$I]}" ]
+      then
+        LOWERTEMP=${temps[$I-1]}
+        HIGHERTEMP=${temps[$I]}
+        LOWERPWM=${fans[$I-1]}
+        HIGHERPWM=${fans[$I]}
+        fan=$(echo "( ( $temp - $LOWERTEMP ) * ( $HIGHERPWM - $LOWERPWM ) / ( $HIGHERTEMP - $LOWERTEMP ) ) + $LOWERPWM" | bc)
+        I=${#temps[@]}
+      fi
+      I=$((I + 1))
+    done
+  fi
+  if [ -z "$fan" ]
+  then
+    fan=${fans[$((I - 1))]}
+  fi
+  fan_max=$(cat pwm1_max)
+  fan_min=$(cat pwm1_min)
+  file_write "$(echo "( ( $fan * ($fan_max - $fan_min) ) / 100 ) + $fan_min" | bc)" pwm1
+  sleep "$time_interval"
+done
+
+exit 0

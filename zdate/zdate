@@ -1,0 +1,43 @@
+#!/bin/sh
+
+fname="$(basename "$0")"
+
+usage()
+{
+  echo "$fname [options] [path...]"
+  echo 'Display latest date of modification of any item in the path'
+}
+
+while getopts ":hs" opt;
+do
+  _opt=y
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    s)
+      _opt_s=y
+      ;;
+    \?)
+      echo "Uknown option: $OPTARG" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+targets="."
+[ $# -gt 0 ] && targets="$*"
+
+ret=$(find $targets -type f -printf '%T@\n' | sort | tail -n1 | cut -d'.' -f1)
+
+if [ -z "$_opt_s" ]
+then
+  ret=$(date --date="@$ret" 2>/dev/null)
+fi
+
+[ -n "$ret" ] && echo $ret
+

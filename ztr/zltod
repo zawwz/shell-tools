@@ -1,0 +1,96 @@
+#!/bin/sh
+
+usage () {
+  echo "zltod [options] <name>"
+  echo "  Options:  "
+  echo "    -h          Show this message then exit"
+  echo "    -w          Search whole words only"
+  echo "    -i          Ignore case"
+  echo "    -d          Show device name instead of partition"
+  echo "    -f          Give full name (/dev/)"
+}
+
+while getopts ":hwidf" opt;
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    w)
+      _opt_w=y
+      ;;
+    i)
+      _opt_i=y
+      ;;
+    d)
+      _opt_d=y
+      ;;
+    f)
+      _opt_f=y
+      ;;
+    \?)
+      echo "Uknown option: $OPTARG" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [ -n "$_opt_w" ]
+then
+  if [ -z "$GREPARGS" ]
+  then
+    GREPARGS="-"
+  fi
+  GREPARGS=$GREPARGS"w"
+fi
+
+if [ -n "$_opt_i" ]
+then
+  if [ -z "$GREPARGS" ]
+  then
+    GREPARGS="-"
+  fi
+  GREPARGS=$GREPARGS"i"
+fi
+
+shift $((OPTIND-1))
+
+if [ $# -le 0 ]
+then
+  usage
+  exit 2
+fi
+
+_LIST=$(lsblk -lnio NAME,LABEL | tr -s ' ')
+_SEARCH=$(echo "$_LIST" | grep $GREPARGS "$*" )
+
+if [ -z "$_SEARCH" ] ## no result
+then
+  exit 0
+elif [ "$(echo "$_SEARCH" | wc -l)" -gt 1 ] ## more than 1 result
+then
+  echo "More than one result" >&2
+  exit 3
+fi
+
+_partition=$(echo "$_SEARCH" | awk '{print $1}')
+
+if [ -n "$_partition" ] && [ -n "$_opt_f" ]
+then
+  printf "/dev/"
+fi
+if [ -n "$_opt_d" ]
+then
+  if echo "$_SEARCH" | grep -q nvme
+  then
+    echo "$_partition" | cut -c1-7
+  else
+    echo "$_partition" | cut -c1-3
+  fi
+else
+  echo "$_partition"
+fi
+
+exit 0

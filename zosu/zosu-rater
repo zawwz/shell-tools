@@ -1,0 +1,76 @@
+#!/bin/sh
+
+if [ $# -lt 2 ]
+then
+  echo "$0 <rate> <file>"
+fi
+
+RATE="$1"
+FILE="$2"
+
+OUTPUTFILE="$(echo "$2" | sed 's/\.osu//g' | cut -d']' -f1) x$RATE].osu"
+
+AUDIO=$(grep "AudioFilename:" "$FILE" | cut -d' ' -f2- | tr -d '\n\r')
+AUDIORATED=$(echo $AUDIO | cut -d'.' -f1)-x$RATE".mp3"
+
+echo "" > $OUTPUTFILE
+rm "$OUTPUTFILE"
+
+output_line () {
+  printf "%s\r\n" "$1" >> $OUTPUTFILE
+}
+
+audioRate () {
+  ffmpeg -i "$AUDIO" -filter:a "asetrate=$(ffprobe -v error -show_entries stream=sample_rate -of default=noprint_wrappers=1:nokey=1 "$AUDIO")*$RATE" -y "$AUDIORATED"
+}
+
+LINES=$(wc -l "$FILE" | cut -d' ' -f1)
+FFILE=$(cat "$FILE")
+
+step_skip ()
+{
+  printf "$(echo "$FFILE" | grep -B $LINES "$1" | head -n -1)" >> $OUTPUTFILE
+  FFILE=$(echo "$FFILE" | grep -A $LINES "$1" | tail -n +2)
+}
+
+step_skip "AudioFilename:"
+output_line "AudioFilename: $AUDIORATED"
+
+PREVIEW=$(echo "$FFILE" | grep "PreviewTime:" | cut -d' ' -f2 | tr -d '\r\n')
+step_skip "PreviewTime:"
+output_line "PreviewTime: $(echo "$PREVIEW / $RATE" | bc | cut -d '.' -f1)"
+VERSION=$(echo "$FFILE" | grep "Version:" | cut -d':' -f2- | tr -d '\n\r')
+step_skip "Version:"
+output_line "Version:$VERSION x$RATE"
+
+step_skip "BeatmapID:"
+output_line "BeatmapID:0"
+
+step_skip "\[TimingPoints\]"
+TIMINGPOINTS=$(echo "$FFILE" | grep -B $LINES "\[HitObjects\]" | head -n -1)
+OBJECTS=$(echo "$FFILE" | grep -A $LINES "\[HitObjects\]" | tail -n +2)
+
+output_line "[TimingPoints]"
+
+N=$(echo "$TIMINGPOINTS" | wc -l)
+I=0
+
+echo "$TIMINGPOINTS" | awk -F ',' "{ RATE=$RATE"'
+  if ($7 == 0 || $7 == 1)
+  {
+    if ($7 == 1)
+      {print int($1/RATE)","$2/RATE","$3","$4","$5","$6","$7","$8}
+    else
+      {print int($1/RATE)","$2","$3","$4","$5","$6","$7","$8}
+  }
+}' >> "$OUTPUTFILE"
+
+output_line "[HitObjects]"
+N=$(echo "$OBJECTS" | wc -l)
+echo "$OBJECTS" | awk -F "[,:]" "{RATE=$RATE"'
+  if ($1)
+    {print $1","$2","int($3/RATE)","$4","$5","int($6/RATE)":"$7":"$8":"$9":"$10}
+}
+' >> "$OUTPUTFILE"
+
+audioRate

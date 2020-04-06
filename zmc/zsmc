@@ -1,0 +1,178 @@
+#!/bin/sh
+
+config_file="zsmc.conf"
+if [ ! -f "$config_file" ]
+then
+  echo "Generating default config file"
+  cat > "$config_file" << EOF
+# zsmc config file
+SCREEN_NAME=Minecraft
+JAR_FILE=server.jar
+JAVA_COMMAND=java
+JAVA_ARGUMENTS=-Xmx2G
+SERVER_ARGUMENTS=--nogui
+BACKUP_PATH=backup
+EOF
+  exit 100
+fi
+
+# quit if screen isn't installed
+which screen >/dev/null || { echo "screen not installed, screen is required for this script to work" >&2;  exit 1 ; }
+
+# load config
+. "$(pwd)/$config_file"
+
+fname="$(basename "$0")"
+usage() {
+echo "$fname <argument>"
+echo 'Manage minecraft servers
+Backups do not work with bukkit and spigot
+
+Arguments:
+  start             : Start server in background with screen
+  startLocal        : Start server on the current console
+  console           : Bring up the screen instance of the server  (C^a then d to leave)
+  eraseCache        : Upgrade world and clear cached data
+  backup [file]     : Make a world backup. If no file is specifed the current date is used as name
+  restore [file]    : Restore this world backup. If no file is specified, will take the latest file
+  log [date...]     : Display entire log. No date means latest
+  login [date...]   : Display login/logout log. No date means latest
+
+--DATE FORMAT --
+  l             for latest
+  t             for today
+  yyyy-mm-dd    for given day
+  -<x>          for x days before today
+'
+}
+
+
+# Functions
+
+start_server ()
+{
+  if screen -ls | cut -sd'.' -f2 | awk '{print $1}' | grep -qw "$SCREEN_NAME" # abort if server running
+  then
+    echo "A screen under the name '$SCREEN_NAME' is already running" >&2
+    return 1
+  else
+    screen -dmS "$SCREEN_NAME" $JAVA_COMMAND $JAVA_ARGUMENTS -jar "$JAR_FILE" $SERVER_ARGUMENTS
+  fi
+}
+
+attach () {
+  screen -r "$SCREEN_NAME"
+}
+
+stop_server () {
+  screen -S "$SCREEN_NAME" -X stuff "^Mstop^M"
+}
+
+eraseCache ()
+{
+  if screen -ls | cut -sd'.' -f2 | awk '{print $1}' | grep -qw "$SCREEN_NAME" # abort if server running
+  then
+    echo "A screen under the name '$SCREEN_NAME' is already running" >&2
+    return 1
+  else
+    screen -dmS "$SCREEN_NAME" $JAVA_COMMAND $JAVA_ARGUMENTS -jar "$JAR_FILE" $SERVER_ARGUMENTS --forceUpgrade --eraseCache && stop_server && attach
+  fi
+}
+
+world_backup ()
+{
+  # no server.properties
+  [ ! -f server.properties ] && echo "server.properties not found" >&2 && return 1
+  # extract save name
+  world="$(grep "level-name=" server.properties | cut -d '=' -f2-)"
+
+  # create backup path
+  [ ! -d "$BACKUP_PATH" ] && mkdir -p "$BACKUP_PATH"
+
+  # get filename
+  FILE="$1"
+  echo "$1" | grep -q '.tar.gz$' || FILE="$FILE.tar.gz" # add .tar.gz extension if not present
+
+  echo "Backing up world to $FILE"
+  if [ -n "$(command -v pv)" ] # fancy progress bar
+  then tar -cf - "$world" -P | pv -s "$(du -sb "$world" | awk '{print $1}')" | gzip > "$BACKUP_PATH/$FILE"
+  else tar -cvzf "$BACKUP_PATH/$FILE" "$world"
+  fi
+}
+
+world_restore () {
+  tar -xvf "$BACKUP_PATH/$1"
+}
+
+show_log ()
+{
+  # no arg = latest
+  [ -z "$1" ] && show_log l
+
+  # latest
+  if [ "$1" = "l" ] || [ "$1" = "latest" ]
+  then
+    cat logs/latest.log 2>/dev/null
+
+  # latest + all current date
+  elif [ "$1" = "t" ]  || [ "$1" = "today" ] ; then
+    show_log l
+    show_log "$(date -u "+%F")"
+
+  # -X : translate to date
+  elif [ "$(echo "$1" | cut -c1)" = "-" ] ; then
+    show_log "$(date -u --date=@$((  $(date -u +%s) - $((86400 * $(echo "$1" | cut -c2-) ))  )) +%F)"
+
+  # date format iterate files
+  else
+    LIST=$(find logs -maxdepth 1 -type f -name "$1*")
+    for I in $LIST
+    do
+      gzip -dc "$I" 2>/dev/null || cat $I
+    done
+
+  fi
+}
+
+
+# Main process
+
+case $1 in
+  start)      start_server ;;
+  startLocal) $JAVA_COMMAND $JAVA_ARGUMENTS -jar "$JAR_FILE" $SERVER_ARGUMENTS ;;
+  console)    attach ;;
+  stop)       stop_server ;;
+  eraseCache) eraseCache ;;
+  backup)
+    shift 1
+    if [ $# -gt 0 ]
+    then world_backup "$1"
+    else world_backup "$(date -u "+%F_%H%M%S")"
+    fi
+    ;;
+  log)
+    shift 1
+    if [ $# -gt 0 ]
+    then for N ; do show_log "$N" ; done
+    else show_log l
+    fi
+    ;;
+  login)
+    shift 1
+    if [ $# -gt 0 ]
+    then for N ; do show_log "$N" | grep -E '] logged in with entity id | left the game' ; done
+    else show_log l | grep -E '] logged in with entity id | left the game'
+    fi
+    ;;
+  restore)
+    shift 1
+    if [ "$#" -gt 0 ]
+    then world_restore "$1"
+    else world_restore "$(ls -lt "$BACKUP_PATH" | head -n 2 | tail -n 1 | awk '{print $9}')"
+    fi
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

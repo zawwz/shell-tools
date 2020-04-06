@@ -1,0 +1,38 @@
+#!/bin/sh
+
+fname=$(basename "$0")
+usage() {
+  echo "$fname [option] [arguments]
+Execute the zmakefile in the directory
+If there is no zmakefile, uses the makefile instead
+The zmakefile is a shell script
+
+Options:
+  -h        Display help
+  -C <path> Execute from this path"
+}
+
+path=.
+if [ "$1" = "-h" ]
+then
+  usage
+  exit 1
+fi
+if [ "$1" = "-C" ]
+then
+  if [ $# -lt 2 ]
+  then
+    echo "Option -C needs an argument" >&2
+    exit 2
+  fi
+  path="$2"
+fi
+
+cd "$path"
+
+if [ -f Zmakefile ]
+then sh Zmakefile $@
+elif [ -f zmakefile ]
+then sh zmakefile $@
+else make $@
+fi

@@ -1,0 +1,147 @@
+#!/bin/sh
+
+usage()
+{
+  echo "command | ztr [options]"
+  echo ""
+  echo "Options:"
+  echo "  -h    Display help"
+  echo "  -l    Load files in data dir"
+  echo "  -p    Generate partitions"
+  echo "  -d    Generate disks"
+  echo "  -P    Print lines"
+  echo "  -s    Print in sed script format"
+}
+
+gen_tr_lines_disk ()
+{
+  for I in $(ls /sys/block)
+  do
+    _t=$(zdtol $I | head -n1)
+    if [ -n "$_t" ]
+    then
+      printf "/dev/%s:%s\n" "$I" "$(zdtol $I | head -n1)"
+    fi
+  done
+}
+
+gen_tr_lines_part ()
+{
+  lsblk -lnio NAME,LABEL | tr -s ' ' | while read in
+  do
+    in="$in "
+    if [ -n "$(echo "$in" | cut -d' ' -f2-)" ]
+    then
+      printf "/dev/%s:%s\n" "$(echo "$in" | cut -d' ' -f1)" "$(echo "$in" | cut -d' ' -f2- | sed -e 's/ *$//g' )"
+    fi
+  done
+}
+
+gen_sed_script ()
+{
+  while read in
+  do
+    printf "s|%s|%s|g;" "$(echo "$in" | cut -d':' -f1)" "$(echo "$in" | cut -d':' -f2-)"
+  done
+}
+
+if [ -n "$XDG_CONFIG_HOME" ]
+then
+  CONFIG_PATH="$XDG_CONFIG_HOME/ztr"
+else
+  CONFIG_PATH="$HOME/.config/ztr"
+fi
+
+DATA_PATH=$CONFIG_PATH/data/
+
+FILE=/dev/stdin
+
+while getopts ":hPsf:pdl" opt;
+do
+  _opt=y
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    P)
+      _opt_P=y
+      ;;
+    s)
+      _opt_s=y
+      ;;
+    f)
+      _opt_f=y
+      _arg_f=$OPTARG
+      _opt_data=y
+      ;;
+    d)
+      _opt_d=y
+      _opt_data=y
+      ;;
+    p)
+      _opt_p=y
+      _opt_data=y
+      ;;
+    l)
+      _opt_l=y
+      _opt_data=y
+      ;;
+    \?)
+      echo "Uknown option: $OPTARG" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+if [ -z "$_opt_data" ]
+then
+  _opt_p=y
+  _opt_d=y
+  _opt_l=y
+  _opt_L=y
+fi
+
+mkdir -p "$DATA_PATH"
+
+LINES=""
+
+if [ -n "$_opt_f" ]
+then
+  LINES="$(printf "%s\n%s" "$LINES" "$(cat "$_arg_f")" )"
+fi
+if [ -n "$_opt_l" ]
+then
+  LINES="$(printf "%s\n%s" "$LINES" "$(cat "$DATA_PATH"/* 2>/dev/null)" )"
+fi
+if [ -n "$_opt_p" ]
+then
+  LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_part)" )"
+fi
+if [ -n "$_opt_d" ]
+then
+  LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_disk)" )"
+fi
+
+LINES=$(echo "$LINES" | sed '/^\s*$/d')
+
+
+if [ -n "$1" ] ; then
+  FILE="$1"
+fi
+if [ -t 0 ] || [ -n "$_opt_P" ] && [ -z "$1" ]
+then
+
+  if [ -n "$_opt_s" ]
+  then
+    echo "$LINES" | gen_sed_script | rev | cut -c2- | rev
+  else
+    echo "$LINES"
+  fi
+
+else
+  sed "$(echo "$LINES" | gen_sed_script | rev | cut -c2- | rev)" < "$FILE"
+fi

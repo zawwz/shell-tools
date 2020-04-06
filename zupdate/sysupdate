@@ -1,0 +1,88 @@
+#!/bin/sh
+
+linuxpkgnames=""
+
+lock_file=/tmp/update.lock
+
+get_running_programs()
+{
+  echo "$1" | tr '-' '_' | grep -qwE "$(echo "$linuxpkgnames" | tr '-' '_')"  && echo linux
+  for I in $1
+  do
+    pgrep -xi "$I" >/dev/null && echo $I
+  done
+}
+
+stop()
+{
+  rm "$lock_file"
+  exit $1
+}
+
+fetch_error()
+{
+  echo "Error: Could not fetch packages" > /dev/stderr
+  kdialog --passivepopup "Error during system updates: could not fetch packages" 60 --title "System Updates"
+  stop 3
+}
+
+update_error()
+{
+  echo "Error: Could not upgrade system" > /dev/stderr
+  kdialog --passivepopup "Error during system updates: could not upgrade" 60 --title "System Updates"
+  stop 3
+}
+
+
+# Check if another process is running
+if [ -n "$(pgrep zupdate)" ] || [ -f "$lock_file" ]
+then
+  echo "Updates are already running" > /dev/stderr
+  exit 1
+fi
+touch "$lock_file"
+
+which zupdate >/dev/null || { echo "zupdate not installed" >&2; stop 4; }
+
+# package manager specific variables
+if which apt >/dev/null 2>&1
+then
+  linuxpkgnames="linux-image-*"
+elif which pacman > /dev/null 2>&1
+then
+  linuxpkgnames="linux|linux-hardened|linux-lts|linux-zen|linux-mainline|linux-rt|linux-git|linux-next"
+else
+  echo "Unsupported package manager" > /dev/stderr
+  stop 2
+fi
+
+#fetch updates
+
+size=$(zupdate -Mkd) || fetch_error
+
+packages=$(zupdate -L | cut -d' ' -f1) || fetch_error
+
+if [ -z "$packages" ]
+then
+  echo "No updates"
+  stop 0
+fi
+
+# find running updates
+running_programs=$(get_running_programs "$packages")
+if [ -n "$running_programs" ]
+then
+  if ! kdialog --yesno "The following running programs have recieved updates: \n$(echo "$running_programs" | sed 's|^|  -  |g')" --yes-label "Continue" --no-label "Cancel" --title "Updates"
+  then
+    echo "Update cancelled" > /dev/stderr
+    stop 3
+  fi
+fi
+
+kdialog --passivepopup "Installing updates for $size download" 10 --title "System Updates"
+#update
+zupdate -yu || update_error
+#end update
+kdialog --passivepopup "Updates finished" 5 --title "System Updates"
+
+stop 0

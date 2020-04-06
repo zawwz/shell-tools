@@ -1,0 +1,30 @@
+#!/bin/sh
+
+COMMENTSCRIPT="/^\s*#/d;s/\s*#[^\"']*$//"
+SLASHSCRIPT='s|\\|\\\\|g;s|\"|\\\"|g'
+
+SEDSCRIPT="$COMMENTSCRIPT;$SLASHSCRIPT"
+NEWLINE_SCRIPT=':a;N;$!ba;s/\n/\\n/g;'
+
+usage ()
+{
+  echo "shelltocstr [file]"
+  echo ""
+  echo "Transform shell scripts to fit into a C string"
+  echo "Reads from stdin or from a file"
+}
+
+
+if [ -t 0 ]
+then
+  # not piped
+  if [ -n "$1" ]
+  then
+    sed $SEDSCRIPT $1 | sed $NEWLINE_SCRIPT
+  else
+    usage
+  fi
+else
+  # piped
+  sed $SEDSCRIPT /dev/stdin | sed $NEWLINE_SCRIPT
+fi

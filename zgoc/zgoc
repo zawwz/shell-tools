@@ -1,0 +1,337 @@
+#!/bin/sh
+
+#
+# This script does not support multiple GPUs
+# Only radeon GPUs supported
+#
+
+config_file="/usr/share/z/config/zgoc.conf"
+
+if [ ! -f "$config_file" ]
+then
+  echo'# zgoc config file
+GPU_PROFILE_PATH=/usr/share/z/zgoc/profiles/gpu
+GPU_MEM_PATH=/usr/share/z/zgoc/profiles/mem
+GPU_POWER_PATH=/usr/share/z/zgoc/profiles/power
+GPU_NAME=
+GPU_PCI_ID=
+GPU_AUTOMEMFIX=true
+GPU_MIN_POWER=30
+FANC_PROFILE_PATH=/usr/share/z/zgoc/profiles/fan
+FANC_DEFAULT_PROFILE=default
+FANC_TIME_INTERVAL=2' > "$config_file"
+fi
+
+profile_path=$(grep "GPU_PROFILE_PATH=" "$config_file" | cut -d '=' -f2-)
+mem_path=$(grep "GPU_MEM_PATH=" "$config_file" | cut -d '=' -f2-)
+power_path=$(grep "GPU_POWER_PATH=" "$config_file" | cut -d '=' -f2-)
+card_name=$( grep "GPU_NAME=" "$config_file" | cut -d '=' -f2-)
+pci_id=$(grep "GPU_PCI_ID=" "$config_file" | cut -d '=' -f2-)
+automemfix=$(grep "GPU_AUTOMEMFIX=" "$config_file" | cut -d '=' -f2-)
+min_power=$(grep "GPU_MIN_POWER=" "$config_file" | cut -d '=' -f2-)
+if [ ! "$automemfix" = "true" ]
+then
+  automemfix=""
+fi
+
+usage() {
+echo "Usage: zgoc <arguments>"
+echo "Arguments:"
+echo "  print       : show current state"
+echo "  gpu         : GPU overclocking"
+echo "  mem         : memory overclocking"
+echo "  apply       : apply GPU and memory profiles"
+echo "  reset       : reset GPU and memory to stock values"
+echo "  memfix      : fix screen artifacting caused by low memory state"
+echo "  power       : power cap"
+echo ""
+echo "Config file: $config_file"
+}
+
+error () {
+    printf "\033[1;31m%s\033[0m\n" "$1" >&2
+}
+root_check () {
+  if [ "$(id | cut -d'=' -f2 | cut -d'(' -f1)" -ne 0 ]
+  then
+    echo "Root privileges required" > /dev/stderr
+    exit 10
+  fi
+}
+
+_stop() {
+  echo ""
+  exit
+}
+
+trap '_stop' INT
+
+# val_convert <reduction factor n> <precision>
+# convert an integer to a lower decimal
+# output = input*10^-n
+# reads from input
+val_convert () {
+  read -r in
+  size=${#in}
+  n2=$((size - $1))
+  integer=$(echo "$in" | cut -c-$n2)
+  if [ "$2" != 0 ] ; then
+    decimal=$(echo "$in" | cut -c$((n2+1))-"$size" | cut -c1-"$2")
+  fi
+  if [ -z "$integer" ] ; then
+    integer=0
+  fi
+  printf "%s" "$integer"
+  if [ -n "$decimal" ] ; then
+    printf ".%s" "$decimal"
+  fi
+  echo ""
+}
+
+kernel_req ()
+{
+  MAIN_KERNELVER=$(uname -r | cut -d'.' -f1) # Get kernel version.
+  SEC_KERNELVER=$(uname -r | cut -d'.' -f2) # Get kernel version.
+  if [ "$MAIN_KERNELVER" -le "$1" ]; then
+    if [ "$SEC_KERNELVER" -lt "$2" ]; then
+      error "Kernel $1.$2 or higher is required for this feature"
+      exit 13
+   fi
+  fi
+}
+
+# kernel version check
+kernel_req 4 15
+
+file_report () {
+  if [ -f "$(pwd)/$1" ]
+  then
+    printf "%s = " "$(pwd)/$1"
+    cat "$(pwd)/$1"
+  elif [ -f "$1" ]
+  then
+    printf "%s = " "$1"
+    cat "$1"
+  else
+    error "File $1 from $(pwd) unaccessible"
+  fi
+}
+
+file_write () {
+  if ! echo "$1" > "$2" ;
+  then
+    error "Error writing to $2 from $(pwd)"
+    exit 14
+  fi
+  file_report "$2"
+}
+
+high_mem_state () {
+  if [ -z "$HIGH_MEM_STATE" ]
+  then
+    _t=$(grep OD_MCLK "$path/device/pp_od_clk_voltage" -A6)
+    I=0
+    while echo "$_t" | grep -q "$I:" ; do
+      I=$((I + 1))
+    done
+    HIGH_MEM_STATE=$((I - 1))
+  fi
+  echo $HIGH_MEM_STATE
+}
+
+set_core_state () {
+  root_check
+  echo "s$1: $2 MHz $3 mV"
+  echo "s$1 $2 $3" > "$path/device/pp_od_clk_voltage"
+}
+
+set_mem_state () {
+  root_check
+  echo "m$1: $2 MHz $3 mV"
+  echo "m $1 $2 $3" > "$path/device/pp_od_clk_voltage"
+}
+
+force_mem_state_high () {
+  root_check
+  echo "manual" > "$path/device/power_dpm_force_performance_level"
+  high_mem_state > "$path/device/pp_dpm_mclk"
+  echo "Forcing memory state to $(high_mem_state) (fix artifacting)"
+}
+
+apply () {
+  root_check
+  echo "c" > "$path/device/pp_od_clk_voltage"
+  echo "Profile applied"
+  if [ -n "$automemfix" ] ; then
+    force_mem_state_high
+  fi
+}
+
+reset_stock () {
+  root_check
+  if echo "0 1 2 3 4 5 6 7" > "$path/device/pp_dpm_sclk" && echo "r" > "$path/device/pp_od_clk_voltage" ; then
+    echo "Reset to default"
+  fi
+}
+
+apply_power () {
+  root_check
+  if ! echo "$1" | grep -Eq '^[0-9]+$' ; then
+    echo "Invalid power value" >&2
+    exit 2
+  elif [ "$1" -lt "$min_power" ] ; then
+    echo "Power value too low" >&2
+    exit 2
+  elif [ -z "$1" ] ; then
+    echo "No power value given" >&2
+    exit 2
+  else
+    if echo "$1""000000" > $hwmon/power1_cap ; then
+      echo "Power cap set to $1 W"
+    fi
+  fi
+}
+
+
+set_profile () {
+  read -r _states
+  read -r _frequencies
+  read -r _voltages
+  I=1
+  for T in $_states
+  do
+    if [ "$1" = "gpu" ] ; then
+      set_core_state "$(echo "$_states" | awk -v I=$I '{print $I}')" "$(echo "$_frequencies" | awk -v I=$I '{print $I}')" "$(echo "$_voltages" | awk -v I=$I '{print $I}')"
+    elif [ "$1" = "mem" ] ; then
+      set_mem_state "$(echo "$_states" | awk -v I=$I '{print $I}')" "$(echo "$_frequencies" | awk -v I=$I '{print $I}')" "$(echo "$_voltages" | awk -v I=$I '{print $I}')"
+    fi
+    I=$((I + 1))
+  done
+}
+
+## locate device path
+if [ "$(lspci | grep -c VGA)" -gt 1 ]
+then
+  if [ -z "$card_name" ] && [ -z "$pci_id" ] ; then
+    error "Several GPUs are present and no GPU is specified"
+    error "Edit GPU_NAME or GPU_PCI_ID in '$config_file'"
+    exit 20
+  fi
+  if [ -z "$pci_id" ] ; then
+    pci_id=$(lspci | grep  VGA | grep "$card_name" | cut -d ' ' -f1)
+    if [ "$(echo "$pci_id" | wc -l)" -gt 1 ] ; then
+      error "More than one name match for GPU"
+      exit 21
+    elif [ "$(echo "$pci_id" | wc -l)" -lt 1 ] ; then
+      error "No name match for GPU"
+      exit 22
+    fi
+  fi
+  if ! path=$(ls -l /sys/class/drm/card? | grep "$pci_id" | tr -s ' ' | cut -d ' ' -f9) ; then
+    error "Error finding pci device"
+    echo 23
+  fi
+else
+  path=/sys/class/drm/card0
+fi
+
+hwmon=$path/device/hwmon/$(ls $path/device/hwmon)
+
+if [ "$( printf "0x%08x\n" "$(cat /sys/module/amdgpu/parameters/ppfeaturemask)" )" != "0xffffffff" ] ; then
+  error "PP feature not enabled"
+  echo "Append 'amdgpu.ppfeaturemask=0xffffffff' to boot parameters to enable it" >&2
+  exit 11
+fi
+
+if [ ! -f "$path/device/pp_od_clk_voltage" ]
+then
+  error "FATAL: overclocking file not found"
+  error "Either feature is not properly enabled or this isn't a Radeon GPU"
+  exit 12
+fi
+
+# read arguments
+shift $((OPTIND-1))
+
+if [ "$#" -gt 0 ]
+then
+
+  if [ "$1" = "reset" ]; then
+    reset_stock
+
+  elif [ "$1" = "gpu" ]; then
+
+    if [ "$2" = "profile" ]; then
+      if [ -f "$profile_path/$3" ] ; then
+        set_profile gpu < "$profile_path/$3"
+      else
+        if ! cd "$profile_path" 2>/dev/null ; then
+          exit
+        fi
+        ls -p | grep -v /
+      fi
+    elif [ "$2" = "file" ]; then
+      set_profile gpu < "$3"
+      apply
+    else
+      echo "zgoc gpu <profile/file>"
+    fi
+
+  elif [ "$1" = "mem" ]; then
+
+    if [ "$2" = "profile" ]; then
+      if [ -f "$mem_path/$3" ] ; then
+        set_profile mem < "$mem_path/$3"
+      else
+        if ! cd "$mem_path" 2>/dev/null ; then
+          exit
+        fi
+        ls -p | grep -v /
+      fi
+    elif [ "$2" = "file" ]; then
+      set_profile mem < "$3"
+      apply
+    else
+      echo "zgoc mem <profile/file>"
+    fi
+
+  elif [ "$1" = "power" ] ; then
+
+    kernel_req 4 20
+
+    if [ "$2" = "profile" ]; then
+      if [ -f "$power_path/$3" ] ; then
+        apply_power "$(cat "$power_path/$3")"
+      else
+        if ! cd "$power_path" 2>/dev/null ; then
+          exit
+        fi
+        ls -p | grep -v /
+      fi
+    elif [ "$2" = "max" ]; then
+      apply_power "$(val_convert 6 0 < $hwmon/power1_cap_max)"
+    elif [ "$2" = "set" ]; then
+      apply_power "$3"
+    elif [ "$2" = "print" ]; then
+      echo $(val_convert 6 0 < $hwmon/power1_cap) W
+    else
+      echo "zgoc power <max/profile/set/print>"
+    fi
+
+  elif [ "$1" = "apply" ]; then
+    apply
+
+  elif [ "$1" = "memfix" ]; then
+    force_mem_state_high
+
+  elif [ "$1" = "print" ]; then
+    cat $path/device/pp_od_clk_voltage
+
+  else
+    usage
+  fi
+else
+  usage
+fi
+
+exit 0

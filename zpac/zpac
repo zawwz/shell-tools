@@ -1,0 +1,412 @@
+#!/bin/sh
+
+usage()
+{
+  echo "Usage: zpac <operation> [sub-operation]"
+  echo "Operations:"
+  echo "  master      : Master volume operation"
+  echo "  app         : Application volume operation"
+  echo "  mic         : Mic operation"
+  echo "  fx          : FX operation"
+  echo "  unload-hdmi : Unload HDMI sound modules"
+  echo "  tsched      : Turn on or off scheduling"
+}
+
+value()
+{
+  if [ "$(printf "%s" "$1" | tail -c 1)" = "%" ]
+  then
+    echo "$(echo "$1" | cut -d'%' -f1) * 65535 / 100" | bc
+  else
+    echo "$1"
+  fi
+}
+
+
+tsched_0() {
+  sed -i 's|^load-module module-udev-detect.*|load-module module-udev-detect tsched=0|' /etc/pulse/default.pa
+}
+tsched_1() {
+  sed -i 's|^load-module module-udev-detect.*|load-module module-udev-detect|' /etc/pulse/default.pa
+}
+
+
+FXon()
+{
+  screen -dmS "pulseeffects" pulseeffects --gapplication-service > /dev/null 2>&1
+  echo "FX on"
+}
+FXoff()
+{
+  pulseeffects -q
+  echo "FX off"
+}
+FXtoggle()
+{
+  if [ "$(pgrep -c pulseeffects)" -lt 1 ]
+  then FXon
+  else FXoff
+  fi
+}
+FXstate()
+{
+  if [ "$(pgrep -c pulseeffects)" -ge 1 ]
+  then echo "FX on"
+  else echo "FX off"
+  fi
+}
+
+get_list_sinks()
+{
+  if [ -z "$LIST_SINKS" ]
+  then
+    LIST_SINKS="$(pacmd list-sinks)"
+  fi
+}
+list_sinks() { echo "$LIST_SINKS"; }
+
+get_list_sink_inputs()
+{
+  if [ -z "$LIST_SINK_INPUTS" ]
+  then
+    LIST_SINK_INPUTS="$(pacmd list-sink-inputs)"
+  fi
+}
+list_sink_inputs() { echo "$LIST_SINK_INPUTS"; }
+
+get_list_sources()
+{
+  if [ -z "$LIST_SOURCES" ]
+  then
+    LIST_SOURCES="$(pacmd list-sources)"
+  fi
+}
+list_sources() { echo "$LIST_SOURCES"; }
+
+master_index() {
+  list_sinks | grep "* index:" | awk '{print $3}'
+}
+
+##############
+# SINK OPERATIONS
+sinkvolume()
+{
+  list_sinks | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $3}'
+}
+sinkvolumep()
+{
+  list_sinks | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $5}'
+}
+sinkvolumeset()
+{
+  R="$(pacmd set-sink-volume "$1" "$(value $2)")"
+  if [ -z "$R" ] ; then
+    echo "$3 @ $2"
+  else
+    echo "$R"
+  fi
+}
+sinkmutestate()
+{
+  if [ "$(list_sinks | grep -E "(index: $1)|(muted: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')" = "yes" ]
+  then echo "$2 mute on"
+  else echo "$2 mute off"
+  fi
+}
+sinkmuteset()
+{
+  R="$(pacmd set-sink-mute "$1" "$(value $2)")"
+  if [ -z "$R" ] ; then
+    if [ "$2" -eq 1 ]
+    then echo "$3 mute on"
+    else echo "$3 mute off"
+    fi
+  else
+    echo "$R"
+  fi
+}
+sinkmutetoggle()
+{
+  if sinkmutestate $1 | grep -q "mute on"; then
+    sinkmuteset $1 0 $2
+  else
+    sinkmuteset $1 1 $2
+  fi
+}
+
+################
+# SINK INPUT OPERATIONS
+sinkinvolume()
+{
+  list_sink_inputs | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $3}'
+}
+sinkinvolumep()
+{
+  list_sink_inputs | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $5}'
+}
+sinkinlist()
+{
+  list_sink_inputs | grep application.process.binary | cut -d '"' -f2
+}
+sinkinvolumeset()
+{
+  sinkid=$(list_sink_inputs | grep -E "(index: $1)|(sink: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')
+  sinkvol=$(list_sinks | grep -E "(index: )|(volume: )" | grep "index: $sinkid" -A1 | tail -n1 | awk '{print $3}')
+  val=$(echo "$(value $2)"'*'"$sinkvol / 65536" | bc)
+  R="$(pacmd set-sink-input-volume "$1" "$val")"
+  if [ -z "$R" ] ; then
+    echo "app \"$3\" @ $2"
+  else
+    echo "$R"
+  fi
+}
+sinkin_get_indexes()
+{
+  list_sink_inputs | grep -E "(index: )|(application.process.binary = )" | grep "application.process.binary = \"$1\"" -B1 | head -n1 | awk '{print $2}'
+}
+
+#############
+# SOURCE OPERATIONS
+sourcelist()
+{
+  list_sources | grep device.product.name | cut -d '"' -f2
+}
+sourcevolume()
+{
+  list_sources | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $3}'
+}
+sourcevolumep()
+{
+  list_sources | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $5}'
+}
+sourcevolumeset()
+{
+  R="$(pacmd set-source-volume "$1" "$(value $2)")"
+  if [ -z "$R" ] ; then
+    echo "mic \"$3\" @ $2"
+  else
+    echo "$R"
+  fi
+}
+source_get_default_name()
+{
+  list_sources | grep -E '(* index: )|(device.product.name = )'  | grep -A1 "* index: " | tail -n1 | cut -d '"' -f2
+}
+source_get_index()
+{
+  if [ "$1" = "default" ]
+  then
+    list_sources | grep '* index: ' | awk '{print $3}'
+  elif [ -n "$1" ]
+  then
+    list_sources | grep -E "(index: )|(device.product.name = )" | tr '*' ' ' | grep "device.product.name = \"$1"\" -B1 | grep "index:" | awk '{print $2}'
+  fi
+}
+source_name()
+{
+  if [ "$1" = "default" ]
+  then
+    source_get_default_name
+  else
+    echo "$1"
+  fi
+}
+sourcemutestate()
+{
+  if [ "$(list_sources | grep -E "(index: $1)|(muted: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')" = "yes" ]
+  then echo "mic \"$2\" mute on"
+  else echo "mic \"$2\" mute off"
+  fi
+}
+sourcemuteset()
+{
+  R="$(pacmd set-source-mute "$1" "$(value $2)")"
+  if [ -z "$R" ] ; then
+    if [ "$2" -eq 1 ]
+    then echo "mic \"$3\" mute on"
+    else echo "mic \"$3\" mute off"
+    fi
+  else
+    echo "$R"
+  fi
+}
+sourcemutetoggle()
+{
+  if sourcemutestate $1 | grep -q "mute on"; then
+    sourcemuteset $1 0 "$2"
+  else
+    sourcemuteset $1 1 "$2"
+  fi
+}
+
+if [ -z "$1" ]
+then
+  usage
+  exit 1
+elif [ "$1" = "master" ]
+then
+  get_list_sinks
+  case $2 in
+    setvolume) sinkvolumeset $(master_index) $3 "master" ;;
+    volume)    sinkvolumep $(master_index) $3 "master"   ;;
+    mute)
+      case $3 in
+        on)     sinkmuteset $(master_index) 1 master   ;;
+        off)    sinkmuteset $(master_index) 0 master   ;;
+        toggle) sinkmutetoggle $(master_index) master  ;;
+        state)  sinkmutestate $(master_index) master   ;;
+        *) echo "zpac master mute <on/off/toggle/state>" && exit 1 ;;
+      esac
+    ;;
+    *) echo "zpac master <volume/setvolume/mute>" && exit 1 ;;
+  esac
+
+elif [ "$1" = "app" ]
+then
+
+  if [ "$2" = "list" ]
+  then
+    get_list_sink_inputs
+    sinkinlist
+
+  elif [ "$2" = "volume" ]
+  then
+    get_list_sink_inputs
+    shift $((OPTIND+1))
+    for N
+    do
+      for I in $(sinkin_get_indexes "$N")
+      do
+        sinkinvolumep $I
+      done
+    done
+
+  elif [ "$2" = "setvolume" ]
+  then
+
+    if [ -n "$3" ]
+    then
+      vol=$3
+      shift $((OPTIND+2))
+      get_list_sink_inputs
+      get_list_sinks
+      for N
+      do
+        for I in $(sinkin_get_indexes "$N")
+        do
+          sinkinvolumeset $I $vol "$N"
+        done
+      done
+    else
+      echo "zpac app setvolume <volume> <binary...>"
+    fi
+
+  else
+    echo "zpac app <list/setvolume>"
+  fi
+
+elif [ "$1" = "mic" ]
+then
+
+  if [ "$2" = "list" ]
+  then
+
+    get_list_sources
+    sourcelist
+
+  elif [ "$2" = "volume" ]
+  then
+    get_list_sources
+    shift $((OPTIND+1))
+    for N
+    do
+      sourcevolumep $(sinkin_get_indexes "$N")
+    done
+
+  elif [ "$2" = "setvolume" ]
+  then
+
+    if [ -n "$3" ]
+    then
+      get_list_sources
+      vol=$3
+      shift $((OPTIND+2))
+      for N
+      do
+        sourcevolumeset $(source_get_index "$N") $vol "$(source_name "$N")"
+      done
+    else
+      echo "zpac mic setvolume <volume> <mic...>"
+    fi
+
+  elif [ "$2" = "mute" ]
+  then
+    get_list_sources
+    case $3 in
+      on|off|toggle|state) s=$3 ;;
+      *) echo "zpac mic mute <on/off/toggle/state> <mic...>" && exit 1 ;;
+    esac
+
+    shift $((OPTIND+2))
+    for N
+    do
+      case $s in
+        "on")     sourcemuteset  $(source_get_index "$N") 1 "$(source_name "$N")" ;;
+        "off")    sourcemuteset  $(source_get_index "$N") 0 "$(source_name "$N")" ;;
+        "toggle") sourcemutetoggle $(source_get_index "$N") "$(source_name "$N")" ;;
+        "state")  sourcemutestate  $(source_get_index "$N") "$(source_name "$N")" ;;
+      esac
+    done
+
+  else
+    echo "zpac mic <list/volume/setvolume/mute>"
+  fi
+
+
+elif [ "$1" = "fx" ]
+then
+  [ -z "$(which pulseeffects)" ] && echo "No FX available" >&2 && exit 1
+
+  case $2 in
+    on|off|toggle|state) MODE=$2 ;;
+    *) echo "zpac fx <on/off/toggle/state>" && exit 1 ;;
+  esac
+
+  if [ -z "$3" ] #all fx
+  then
+    case $MODE in
+      on)     FXon     ;;
+      off)    FXoff    ;;
+      toggle) FXtoggle ;;
+      state)  FXstate  ;;
+    esac
+  else
+    echo "FX '$3' not found"
+  fi
+
+elif [ "$1" = "unload-hdmi" ]
+then
+
+  for I in $(lspci | grep HDMI | awk '{print $1}' | tr ':' '_')
+  do
+    pacmd unload-module $(pacmd list-modules | grep "pci-0000_$I" -B2 | head -n 1 | awk '{print $2}') > /dev/null 2>&1
+  done
+
+elif [ "$1" = "tsched" ]
+then
+
+  if [ "$2" = "0" ]
+  then
+    tsched_0
+
+  elif [ "$2" = "1" ]
+  then
+    tsched_1
+
+  else
+    echo "zpac tsched <0/1>"
+  fi
+
+else
+  usage
+fi

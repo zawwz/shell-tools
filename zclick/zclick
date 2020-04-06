@@ -1,0 +1,136 @@
+#!/bin/sh
+
+usage ()
+{
+  echo "zclick [options]"
+  echo ""
+  echo "Options:"
+  echo "  -h        Display this help"
+  echo "  -d        Run daemon"
+  echo "  -c <id>   Click ID: 1:left 2:middle 3:right."
+  echo "  -i <ms>   Interval between clicks in ms, 0 for no clicking. Default 20."
+  echo "  -t        Toggle clicking. Sets interval to 0 if current value was != 0"
+}
+
+error () {
+    printf "\033[1;31m%s\033[0m\n" "$1" >&2
+}
+
+arg_i=20
+block_time=100
+
+if [ -z "$FOLDER" ]
+then
+  if [-n "$XDG_DATA_HOME" ]
+  then
+    FOLDER="$XDG_DATA_HOME/zclick"
+  else
+    FOLDER="$HOME/.local/share/zclick"
+  fi
+fi
+
+while getopts ":hc:i:dt" opt;
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    c)
+      if ! echo "$OPTARG" | grep -Eq '^[0-9]+$'
+      then
+        error "c argument has to be an integer"
+        exit 2
+      fi
+      if [ -z "$OPTARG" ]
+      then
+        error "c needs an argument"
+        exit 2
+      fi
+      if [ "$OPTARG" -lt 1 ]
+      then
+        error "c argument has to be greater than 0"
+        exit 2
+      fi
+      arg_c=$OPTARG
+      ;;
+    i)
+      if ! echo "$OPTARG" | grep -Eq '^[0-9]+$'
+      then
+        error "i argument has to be an integer"
+        exit 2
+      fi
+      if [ -z "$OPTARG" ]
+      then
+        error "i needs an argument"
+        exit 2
+      fi
+      if [ "$OPTARG" -lt 1 ]
+      then
+        error "i argument has to be greater than 0"
+        exit 2
+      fi
+      arg_i=$OPTARG
+      ;;
+    d)
+      opt_d=y
+      ;;
+    t)
+      opt_t=y
+      ;;
+    \?)
+    	echo "Uknown option: $OPTARG"
+      usage
+      exit 1
+    	;;
+    esac
+done
+
+mkdir -p "$FOLDER"
+
+if [ -n "$opt_d" ]
+then
+  ## DAEMON
+  # reset status of all clicks
+  for I in "$FOLDER"/*
+  do
+    echo "0" > "$I"
+  done
+  # DAEMON
+  while true
+  do
+    for I in "$FOLDER"/*
+    do
+      interval=$(cat "$I")
+      click_id=$(echo "$I" | rev | cut -d'/' -f1 | rev)
+      if [ "$interval" != "0" ]
+      then
+        xdotool click --repeat "$(echo "$block_time / $arg_i" | bc)" --delay "$interval" "$click_id"
+      fi
+    done
+  done
+
+else
+  ## CONTROL
+
+  if [ -z "$arg_c" ]
+  then
+    usage
+    exit
+  fi
+
+  if [ -n "$opt_t" ]
+  then
+    #toggle
+    if [ "$(cat "$FOLDER/$arg_c")" != "0" ] ; then
+      echo 0 > "$FOLDER/$arg_c"
+    else
+      echo "$arg_i" > "$FOLDER/$arg_c"
+    fi
+
+  else
+    #set
+    echo "$arg_i" > "$FOLDER/$arg_c"
+  fi
+
+fi

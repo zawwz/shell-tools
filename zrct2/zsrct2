@@ -1,0 +1,129 @@
+#!/bin/sh
+
+usage() {
+echo "Usage: zrct [options] <operation>"
+echo 'Set of operations for OpenRCT2 server management.
+By default reads zsrct2.conf for config
+
+Operations:
+  start         start in screen instance in background
+  startLocal    start the server in the current console
+  console       prompt the screen instance (C-a + d to leave)
+  backup        make a backup of current save
+  getautosave   get latest autosave and sets it as active save
+                -> auto backup of current save
+                | alias: get
+  update        recompile from latest source. Will overwrite previous server
+
+Options:
+  -h            display help
+  -c <file>     use this file for config
+  -s <save>     uses provided save file
+  -S <server>   uses this server instance (folder)
+'
+}
+
+save_backup () {
+  echo "Backing up '$save_file' to $1.sv6.gz"
+  cp "$save_file" "$backup_path/$1.sv6"
+  gzip "$backup_path/$1.sv6"
+}
+
+unset save_file
+
+config_file="zsrct2.conf"
+while getopts ":hS:s:c:" opt;
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    S)
+      server_path=${OPTARG}
+      ;;
+    s)
+      save_file=${OPTARG}
+      ;;
+    c)
+      config_file=${OPTARG}
+      ;;
+    *)
+      echo "Incorrect option: $OPTARG"
+      exit
+      ;;
+  esac
+done
+
+if [ ! -f "$config_file" ]
+then
+  echo "Generating default config file"
+	echo '# zsrct2 1.0 config file
+SAVE_NAME=
+SERVER_NAME=server
+PORT=11753
+SCREEN_NAME=OpenRCT2
+SAVE_FOLDER=saves
+BACKUP_FOLDER=saves/backup
+DATA_FOLDER=data
+SRC_FOLDER=src
+' >> "$config_file" || exit 1
+fi
+
+save_name=$(grep "SAVE_NAME=" "$config_file" | cut -d '=' -f2-)
+server_path=$(grep "SERVER_PATH=" "$config_file" | cut -d '=' -f2-)
+port=$(grep "PORT=" "$config_file" | cut -d '=' -f2-)
+screen_name=$(grep "SCREEN_NAME=" "$config_file" | cut -d '=' -f2-)
+save_path=$(grep "SAVE_PATH=" "$config_file" | cut -d '=' -f2-)
+backup_path=$(grep "BACKUP_PATH=" "$config_file" | cut -d '=' -f2-)
+data_path=$(grep "DATA_PATH=" "$config_file" | cut -d '=' -f2-)
+src_path=$(grep "SRC_PATH=" "$config_file" | cut -d '=' -f2-)
+
+[ -z "$save_file" ] && save_file="$save_path/$save_name.sv6"
+
+[ ! -d "$backup_path" ] && mkdir -p "$backup_path"
+[ ! -d "$save_path" ] && mkdir -p "$save_path"
+[ ! -d "$data_path" ] && mkdir -p "$data_path"
+
+shift $((OPTIND-1))
+
+if [ "$1" ]
+  then
+  if [ "$1" = "start" ]
+  then
+    screen -dmS "$screen_name" "$server_path/openrct2" host "$save_file" --user-data-path "$data_path" --port "$port" --headless
+
+  elif [ "$1" = "startLocal" ]
+  then
+    "$server_path/openrct2" host "$save_file" --user-data-path "$data_path" --port "$port" --headless
+
+  elif [ "$1" = "console" ]
+  then
+    screen -r "$screen_name"
+
+  elif [ "$1" = "backup" ]
+  then
+
+    if [ -n "$2" ]
+    then
+      save_backup "$2"
+    else
+      save_backup "$save_name"_"$(date -u "+20%y-%m-%d_%H%M%S")"
+    fi
+
+  elif [ "$1" = "getautosave" ] || [ "$1" = "get" ]
+  then
+    autosave=$(ls -l "$data_path/save/autosave/" | grep autosave | tail -1 | tr -s ' ' | cut -d ' ' -f9-)
+    mv "$save_file" "$backup_path/$(basename "$save_file")"_"$(date -u "+20%y-%m-%d_%H%M%S")"
+    mv "$data_path/save/autosave/$autosave" "$save_file"
+
+  elif [ "$1" = "update" ]
+  then
+    DISCORD_RPC=false DESKTOP_ENTRY=false CLEAN_SRC=false SRCDIR="$src_path" DESTDIR="$server_path" zrct2-install
+
+  else
+    usage
+  fi
+else
+  usage
+fi

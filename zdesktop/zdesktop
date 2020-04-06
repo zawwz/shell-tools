@@ -1,0 +1,94 @@
+#!/bin/sh
+
+fname="$(basename "$0")"
+
+ERR=0
+
+usage()
+{
+  echo "$fname [options] <operation>"
+  echo '
+Operations:
+  gen [bin_file...]      Generate a desktop file
+  add <desktop_file...>  Add desktop file to applications
+
+Options:
+'
+}
+
+gen_file()
+{
+  unset name
+
+  if [ -n "$1" ]
+  then
+    file="$1"
+    name="$(echo "$1" | sed 's|.[^.]*$||g')"
+    [ -z "$name" ] && name="$1"
+  else
+    name="$(basename "$(pwd)")"
+    file=""
+  fi
+
+  desktop_file=$(echo "$name.desktop" | tr '[:upper:]' '[:lower:]')
+  if [ -f "$desktop_file" ] ; then
+    mv "$desktop_file" "$desktop_file.bak" || return $?
+  fi
+
+  cat > "$desktop_file" << EOF
+[Desktop Entry]
+Name=$name
+Comment=$name
+Type=Application
+Exec=$(pwd)/$file
+Icon=$(pwd)/icon.png
+Categories=Game
+Keywords=keyword;keyword
+EOF
+}
+
+add_file()
+{
+  if [ -f "$1" ]
+  then
+    ln -s "$(pwd)/$1" "$HOME/.local/share/applications"
+  else
+    echo "'$1' is not a file" > /dev/stderr
+    return 1
+  fi
+}
+
+if [ $# -le 0 ]
+then
+  usage
+  exit 1
+fi
+
+if [ "$1" = "gen" ] ; then
+  if [ $# -gt 1 ]
+  then
+    shift $((OPTIND))
+    for N
+    do
+      gen_file "$N"
+    done
+  else
+    gen_file || ERR=$?
+  fi
+elif [ "$1" = "add" ] ; then
+
+  if [ $# -gt 1 ]
+  then
+    shift $((OPTIND))
+    for N
+    do
+      add_file "$N" || ERR=$?
+    done
+  else
+    echo "$fname gen <desktop_file...>" > /dev/stderr
+    exit 1
+  fi
+
+fi
+
+exit $ERR

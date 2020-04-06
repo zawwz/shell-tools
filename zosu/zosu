@@ -1,0 +1,92 @@
+#!/bin/sh
+
+bin=$(basename "$0")
+
+config_file="zosu.conf"
+
+usage()
+{
+  echo "$bin [options] <operation> [arguments]"
+  echo 'Perform operations on a wined osu instance
+
+Operations:
+  start   Start the wined osu
+  kill    Kill the wine server
+  sound   Change the sound driver
+
+Options:
+  -h   Display this help
+  -c   Path to conf file (default zosu.conf)
+'
+}
+
+while getopts ":hc:" opt;
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    c)
+      config_file="$OPTARG"
+      ;;
+    \?)
+      echo "Uknown option: $OPTARG"
+      usage
+      exit 1
+        ;;
+    esac
+done
+
+# resolve config file path
+[ "$(echo $config_file | cut -c1)" != "/" ] && config_file="$(pwd)/$config_file"
+
+# load config file
+[ -f "$config_file" ] && . "$config_file"
+
+# default environment
+[ -z "$OSUDIR" ] && export OSUDIR=osu
+[ -z "$WINEPREFIX" ] && export WINEPREFIX="$(pwd)/.wine"
+export vblank_mode=0
+
+
+shift $((OPTIND-1))
+
+if [ -n "$1" ]
+then
+
+  if [ "$1" = "start" ]; then
+    shift $((OPTIND))
+    wine $OSUDIR/osu\!.exe $@
+
+  elif [ "$1" = "kill" ]; then
+    wineserver -k
+
+  elif [ "$1" = "sound" ]; then
+
+    case $2 in
+      "pulse")
+        winetricks sound=pulse
+        ;;
+      "stable")
+        winetricks sound=pulse
+        ;;
+      "alsa")
+        winetricks sound=alsa
+        ;;
+      "lowlatency")
+        winetricks sound=alsa
+        ;;
+      *)
+        echo "$bin sound <pulse/alsa>"
+    esac
+
+  else
+    usage
+    exit 1
+  fi
+
+else
+  usage
+  exit 1
+fi
