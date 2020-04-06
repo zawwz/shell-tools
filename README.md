@@ -4,7 +4,7 @@ Various CLI Shell tools
 
 ## Index
 
-- [zclick](/zclick/readme.md) : Autoclicker
+- [zclick](/zclick) : Autoclicker
 - [zcsf](/zcsf) : C source file management
 - [zdate](/zdate) : Date operations on folders recursively
 - [zdesktop](/zdesktop) : Generate and manage desktop files
