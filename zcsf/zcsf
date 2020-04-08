@@ -1,8 +1,10 @@
 #!/bin/sh
 
+
+fname=$(basename "$0")
 usage()
 {
-  echo 'zcsf <operation>
+  echo "$fname <operation>"'
 
 Operations:
   make <type>           : create Makefile
@@ -178,140 +180,103 @@ gen_main()
   cp "$mpath" "$SRCDIR" 2>/dev/null || touch "$SRCDIR/main.c$1"
 }
 
+# $1 = filename , $2 = new name
+smart_mv()
+{
+  if [ -f "$SRCDIR/$1.c" ] ; then
+    CFILE="$1.c"
+    CFILE2="$2.c"
+  elif [ -f "$SRCDIR/$1.cpp" ] ; then
+    CFILE="$1.cpp"
+    CFILE2="$2.cpp"
+  fi
+  if [ -f "$IDIR/$1.h" ] ; then
+    HFILE="$1.h"
+    HFILE2="$2.h"
+  elif [ -f "$IDIR/$1.hpp" ] ; then
+    HFILE="$1.hpp"
+    HFILE2="$2.hpp"
+  fi
+
+  [ -z "$CFILE" ] && [ -z "$HFILE" ] && echo "'$1' not found" >&2 && return 1
+
+  [ -n "$CFILE" ] && mv "$SRCDIR/$CFILE" "$SRCDIR/$CFILE2"
+
+  if [ -n "$HFILE" ]
+  then
+    mv "$IDIR/$HFILE" "$IDIR/$HFILE2" || return $?
+    find "$SRCDIR" "$IDIR" -type f -regex '.*\.[ch]p?p?$' -exec sed -i "s:#include \"$HFILE\":#include \"$HFILE2\":g" "{}" "+"
+    sed -i "s:$(header_ifndef "$1"):$(header_ifndef "$2"):g;s:$(header_define "$1"):$(header_define "$2"):g;s:$(header_endif "$1"):$(header_endif "$2"):g" "$IDIR/$HFILE2"
+  fi
+
+}
+
 list_c()
 {
   (
   cd "$SRCDIR" || exit
   if [ -f "main.c" ] || [ -f "main.cpp" ] ; then echo "main" ; fi
-  find . -type f -regex ".*\.cp?p?" | cut -d '/' -f2- | sed 's/\.cpp$//g;s/\.c$//g;/main/d'
+  find . -type f -regex '.*\.cp?p?$' | cut -d '/' -f2- | sed 's/\.cpp$//g;s/\.c$//g;/main/d'
   )
 }
 list_h()
 {
   (
   cd "$IDIR" || exit
-  find . -type f -regex ".*\.hp?p?" | cut -d '/' -f2- | sed 's/\.hpp$//g;s/\.h$//g;/^$/d'
+  find . -type f -regex '.*\.hp?p?$' | cut -d '/' -f2- | sed 's/\.hpp$//g;s/\.h$//g;/^$/d'
   )
 }
 
 load_env .
 
-if [ -z "$1" ]
-then
+case $1 in
 
-  usage
+  main) dir_gen && gen_main $PP ;;
+  ls)  { list_c && list_h; } | sort | uniq ;;
+  mv) smart_mv "$2" "$3"  ;;
+  rclean) clean_all "$2" ;;
 
-elif [ "$1" = "make" ]
-then
+  make)
+    unset help
+    case $2 in
+      c)        gen_make "" ;;
+      cpp|c++)  gen_make "_cpp" ;;
+      *)        echo "$fname make <type>
+Types:
+  c         : C automatic makefile
+  cpp/c++   : C++ automatic makefile"
+    esac
+  ;;
 
-  unset help
-  if [ -n "$2" ]
-  then
-    if [ "$2" = "c" ]
-    then
-      gen_make ""
-
-    elif [ "$2" = "cpp" ] || [ "$2" = "c++" ]
-    then
-      gen_make "_cpp"
-    else
-      help='y'
+  clear)
+    make clean >/dev/null 2>&1 ;  make clear >/dev/null 2>&1
+    # bin
+    [ "$BINDIR" != "." ] && rm -rd "$BINDIR" 2> /dev/null
+    # src
+    if [ "$SRCDIR" != "." ]
+    then rm -rd "$SRCDIR" 2> /dev/null
+    else rm ./*.c ./*.cpp 2> /dev/null
     fi
-
-  else
-    help='y'
-  fi
-
-
-  if [ -n "$help" ]
-  then
-    echo "zcsf make <type>"
-    echo "Types:"
-    echo "  c         : C automatic makefile"
-    echo "  cpp/c++   : C++ automatic makefile"
-  fi
-
-
-elif [ "$1" = "clear" ]
-then
-
-  make clean >/dev/null 2>&1
-  make clear >/dev/null 2>&1
-
-  if [ "$SRCDIR" != "." ] ; then
-    rm -rd "$SRCDIR" 2> /dev/null
-  else
-    rm ./*.c ./*.cpp 2> /dev/null
-  fi
-  [ "$BINDIR" != "." ] && rm -rd "$BINDIR" 2> /dev/null
-
-  if [ "$IDIR" != "." ] ; then
-    rm -rd "$IDIR" 2> /dev/null
-  else
-    rm ./*.h ./*.hpp 2> /dev/null
-  fi
-
-  [ "$ODIR" != "." ] && rm -rd "$ODIR" 2> /dev/null
-
-elif [ "$1" = "main" ]
-then
-
-  dir_gen
-  gen_main $PP
-
-elif [ "$1" = "ls" ]
-then
-
-  (list_c && list_h;) | sort | uniq
-
-elif [ "$1" = "src" ] || [ "$1" = "s" ]
-then
-
-  unset help
-  if [ -n "$2" ] && [ -n "$3" ]
-  then
-    unset f
-    unset c
-    unset h
-    unset pp
-
-    if [ "$2" = "a" ] || [ "$2" = "auto" ]; then
-      f='y'
-      pp=$PP
-
-    elif [ "$2" = "f" ]; then
-      f='y'
-
-    elif [ "$2" = "fpp" ] || [ "$2" = "f++" ]; then
-      f='y'
-      pp='pp'
-
-    elif [ "$2" = "c" ]
-    then
-      c='y'
-
-    elif [ "$2" = "cpp" ] || [ "$2" = "c++" ]; then
-      c='y'
-      pp='pp'
-
-    elif [ "$2" = "h" ]; then
-      h='y'
-
-    elif [ "$2" = "hpp" ] || [ "$2" = "h++" ]; then
-      h='y'
-      pp='pp'
-
-    else
-      help='y'
+    # include
+    if [ "$IDIR" != "." ]
+    then rm -rd "$IDIR" 2> /dev/null
+    else rm ./*.h ./*.hpp 2> /dev/null
     fi
+    # obj
+    [ "$ODIR" != "." ] && rm -rd "$ODIR" 2> /dev/null
+  ;;
 
-  else
-    help='y'
-  fi
-
-  if [ -n "$help" ]
-  then
-    echo 'zcsf src <type> <names>
+  src|s)
+    case $2 in
+      a|auto)   f=y && pp=$PP ;;
+      f)        f=y           ;;
+      fpp|c++)  f=y && pp=pp  ;;
+      c)        c=y           ;;
+      cpp|c++)  c=y && pp=pp  ;;
+      h)        h=y           ;;
+      hpp|h++)  h=y && pp=pp  ;;
+      *)
+        echo "$fname src <type> <names>
 Types:
   a/auto    : create .c[pp] and .h[pp] files correspondingly
   f         : create .c and .h files
@@ -319,9 +284,9 @@ Types:
   c         : create .c file
   cpp/c++   : create .cpp file
   h         : create .h file
-  hpp       : create .hpp file'
-
-  else
+  hpp       : create .hpp file"
+        exit 1
+    esac
     dir_gen
     shift $((OPTIND+1))
     for N
@@ -330,132 +295,86 @@ Types:
       [ -n "$h" ] && gen_hfile "$N" "$pp"
       [ -n "$f" ] && gen_chfiles "$N" "$pp"
     done
-  fi
+  ;;
 
-elif [ "$1" = "rm" ]
-then
+  rm)
+    shift $((OPTIND))
+    for N
+    do
+      rm "$SRCDIR/$N.c" "$SRCDIR/$N.cpp" "$IDIR/$N.h" "$IDIR/$N.hpp" 2>/dev/null
+    done
+  ;;
 
-  shift $((OPTIND))
-  for N
-  do
-    rm "$SRCDIR/$N.c" "$SRCDIR/$N.cpp" "$IDIR/$N.h" "$IDIR/$N.hpp" 2>/dev/null
-  done
+  import)
+    SRCDIR_S=$SRCDIR
+    IDIR_S=$IDIR
 
-elif [ "$1" = "mv" ]
-then
+    clear_env
 
-  if [ -f "$SRCDIR/$2.c" ] ; then
-    CFILE="$2.c"
-    CFILE2="$3.c"
-  elif [ -f "$SRCDIR/$2.cpp" ] ; then
-    CFILE="$2.cpp"
-    CFILE2="$3.cpp"
-  fi
-  if [ -f "$IDIR/$2.h" ] ; then
-    HFILE="$2.h"
-    HFILE2="$3.h"
-  elif [ -f "$IDIR/$2.hpp" ] ; then
-    HFILE="$2.hpp"
-    HFILE2="$3.hpp"
-  fi
-
-  [ -n "$CFILE" ] && mv "$SRCDIR/$CFILE" "$SRCDIR/$CFILE2"
-
-  if [ -n "$HFILE" ]
-  then
-
-    mv "$IDIR/$HFILE" "$IDIR/$HFILE2" || exit
-
-    find "$SRCDIR" "$IDIR" -type f -regex ".*\.[ch]p?p?" -exec sed -i "s:#include \"$HFILE\":#include \"$HFILE2\":g" "{}" "+"
-
-    sed -i "s:$(header_ifndef "$2"):$(header_ifndef "$3"):g;s:$(header_define "$2"):$(header_define "$3"):g;s:$(header_endif "$2"):$(header_endif "$3"):g" "$IDIR/$HFILE2"
-  fi
-
-  if [ -z "$CFILE" ] && [ -z "$HFILE" ]
-  then
-    echo "'$2' not found"
-    exit 1
-  fi
-
-elif [ "$1" = "import" ]
-then
-
-  SRCDIR_S=$SRCDIR
-  IDIR_S=$IDIR
-
-  clear_env
-
-  import_path="$2"
-  if [ ! -d "$import_path" ] ; then
-    echo "Cannot find '$import_path'"
-    exit 1
-  fi
-  load_env "$import_path"
-
-  if [ -n "$3" ]
-  then
-    if [ -f "$import_path/$SRCDIR/$3.c" ] ; then
-      cp "$import_path/$SRCDIR/$3.c" "$SRCDIR_S"
-      _OK=y
+    import_path="$2"
+    if [ ! -d "$import_path" ] ; then
+      echo "Cannot find '$import_path'"
+      exit 1
     fi
-    if [ -f "$import_path/$SRCDIR/$3.cpp" ] ; then
-      cp "$import_path/$SRCDIR/$3.cpp" "$SRCDIR_S"
-      _OK=y
-    fi
-    if [ -f "$import_path/$IDIR/$3.h" ] ; then
-      cp "$import_path/$IDIR/$3.h" "$IDIR_S"
-      _OK=y
-    fi
-    if [ -f "$import_path/$IDIR/$3.hpp" ] ; then
-      cp "$import_path/$IDIR/$3.hpp" "$IDIR_S"
-      _OK=y
-    fi
-    if [ -z "$_OK" ]
+    load_env "$import_path"
+
+    if [ -n "$3" ]
     then
-      echo "Cannot find '$3' at '$import_path'"
+      if [ -f "$import_path/$SRCDIR/$3.c" ] ; then
+        cp "$import_path/$SRCDIR/$3.c" "$SRCDIR_S"
+        _OK=y
+      fi
+      if [ -f "$import_path/$SRCDIR/$3.cpp" ] ; then
+        cp "$import_path/$SRCDIR/$3.cpp" "$SRCDIR_S"
+        _OK=y
+      fi
+      if [ -f "$import_path/$IDIR/$3.h" ] ; then
+        cp "$import_path/$IDIR/$3.h" "$IDIR_S"
+        _OK=y
+      fi
+      if [ -f "$import_path/$IDIR/$3.hpp" ] ; then
+        cp "$import_path/$IDIR/$3.hpp" "$IDIR_S"
+        _OK=y
+      fi
+      if [ -z "$_OK" ]
+      then
+        echo "Cannot find '$3' at '$import_path'" >&2
+        exit 1
+      fi
+    else
+      find "$import_path/$SRCDIR" -regex '.*\.cp?p?$' -exec cp "{}" "$SRCDIR_S/" ";"
+      find "$import_path/$IDIR" -regex '.*\.hp?p?$' -exec cp "{}" "$IDIR_S/" ";"
     fi
-  else
+  ;;
 
-    find "$import_path/$SRCDIR" -regex '.*\.cp?p?' -exec cp "{}" "$SRCDIR_S/" ";"
-    find "$import_path/$IDIR" -regex '.*\.hp?p?' -exec cp "{}" "$IDIR_S/" ";"
+  export)
+    if [ -f "$SRCDIR/$2.c" ] ; then
+      CFILE="$2.c"
+      CFILE2="$3.c"
+    elif [ -f "$SRCDIR/$2.cpp" ] ; then
+      CFILE="$2.cpp"
+      CFILE2="$3.cpp"
+    fi
+    if [ -f "$IDIR/$2.h" ] ; then
+      HFILE="$2.h"
+      HFILE2="$3.h"
+    elif [ -f "$IDIR/$2.hpp" ] ; then
+      HFILE="$2.hpp"
+      HFILE2="$3.hpp"
+    fi
 
-  fi
+    clear_env
 
-elif [ "$1" = "export" ]
-then
+    export_path="$3"
+    if [ ! -d "$export_path" ] ; then
+      echo "Cannot find '$import_path'" >&2
+      exit 1
+    fi
+    load_env "$export_path"
 
-  if [ -f "$SRCDIR/$2.c" ] ; then
-    CFILE="$2.c"
-    CFILE2="$3.c"
-  elif [ -f "$SRCDIR/$2.cpp" ] ; then
-    CFILE="$2.cpp"
-    CFILE2="$3.cpp"
-  fi
-  if [ -f "$IDIR/$2.h" ] ; then
-    HFILE="$2.h"
-    HFILE2="$3.h"
-  elif [ -f "$IDIR/$2.hpp" ] ; then
-    HFILE="$2.hpp"
-    HFILE2="$3.hpp"
-  fi
+    cp "$SRCDIR_S/$CFILE" "$export_path/$SRCDIR"
+    cp "$IDIR_S/$HFILE" "$export_path/$IDIR"
+  ;;
 
-  clear_env
-
-  export_path="$3"
-  if [ ! -d "$export_path" ] ; then
-    echo "Cannot find '$import_path'"
-    exit 1
-  fi
-  load_env "$export_path"
-
-  cp "$SRCDIR_S/$CFILE" "$export_path/$SRCDIR"
-  cp "$IDIR_S/$HFILE" "$export_path/$IDIR"
-
-elif [ "$1" = "rclean" ]
-then
-
- clean_all "$2"
-
-else
-  usage
-fi
+  *) usage ; exit 1 ;;
+esac
