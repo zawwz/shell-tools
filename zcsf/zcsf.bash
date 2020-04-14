@@ -19,7 +19,7 @@ _zcsf_completion()
     _compwords=""
   fi
 
-  COMPREPLY=($(compgen -W "$_compwords" "${COMP_WORDS[$COMP_CWORD]}"))
+  COMPREPLY=($(compgen -W "$_compwords" "${COMP_WORDS[$COMP_CWORD]}" 2>/dev/null))
 }
 
 complete -F _zcsf_completion -o dirnames zcsf

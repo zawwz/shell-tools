@@ -19,7 +19,7 @@ $(shell mkdir -p $(BINDIR))
 # automatically finds .h
 DEPS = $(shell find $(IDIR) -type f -regex '.*\.h')
 # automatically finds .c and makes the corresponding .o rule
-OBJ = $(shell find $(SRCDIR) -type f -regex '.*\.c' | sed 's|\.c$|.o|g;s|$(SRCDIR)/|$(ODIR)/|g')
+OBJ = $(shell find $(SRCDIR) -type f -regex '.*\.c' | sed 's|\.c|.o|g;s|$(SRCDIR)/|$(ODIR)/|g')
 
 $(ODIR)/%.o: $(SRCDIR)/%.c $(DEPS)
 	$(CC) $(CXXFLAGS) -c -o $@ $<

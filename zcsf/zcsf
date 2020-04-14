@@ -28,7 +28,7 @@ else
   local_configpath="$HOME/.config/zcsf"
 fi
 
-usr_configpath="/usr/share/z/zcsf"
+usr_configpath="/usr/share/zcsf"
 
 if [ -n "$CONFIGPATH" ]
 then
