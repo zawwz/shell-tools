@@ -54,6 +54,8 @@ do
       message=$OPTARG
       _opt_m=y
       ;;
+    T) title="$OPTARG" ;;
+    t) _arg_t="$OPTARG" ;;
     \?)
     	echo "Uknown option: $OPTARG"
       usage
