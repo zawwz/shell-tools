@@ -21,7 +21,7 @@ block_time=100
 
 if [ -z "$FOLDER" ]
 then
-  if [-n "$XDG_DATA_HOME" ]
+  if [ -n "$XDG_DATA_HOME" ]
   then
     FOLDER="$XDG_DATA_HOME/zclick"
   else
