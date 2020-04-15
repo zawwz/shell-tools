@@ -8,9 +8,16 @@ NAME = hello
 LDFLAGS =
 
 CC=gcc
-CXXFLAGS= -I$(IDIR) -Wall -pedantic -std=c18 -O2
+CXXFLAGS= -I$(IDIR) -Wall -pedantic -std=c18
 ifeq	 ($(DEBUG),true)
 	CXXFLAGS += -g
+else
+	CXXFLAGS += -O2
+endif
+ifeq	($(STATIC),true)
+	LDFLAGS +=
+else
+	LDFLAGS +=
 endif
 
 $(shell mkdir -p $(ODIR))

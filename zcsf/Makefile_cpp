@@ -14,6 +14,11 @@ ifeq	 ($(DEBUG),true)
 else
 	CXXFLAGS += -O2
 endif
+ifeq	($(STATIC),true)
+	LDFLAGS +=
+else
+	LDFLAGS +=
+endif
 
 $(shell mkdir -p $(ODIR))
 $(shell mkdir -p $(BINDIR))
