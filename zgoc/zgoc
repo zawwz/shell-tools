@@ -5,45 +5,55 @@
 # Only radeon GPUs supported
 #
 
-config_file="/usr/share/z/config/zgoc.conf"
+config_path="/etc/zgoc"
+config_file="$config_path/zgoc.conf"
 
+# generate default conf file
 if [ ! -f "$config_file" ]
 then
-  echo'# zgoc config file
-GPU_PROFILE_PATH=/usr/share/z/zgoc/profiles/gpu
-GPU_MEM_PATH=/usr/share/z/zgoc/profiles/mem
-GPU_POWER_PATH=/usr/share/z/zgoc/profiles/power
+  mkdir -p "$config_path" 2>/dev/null && touch "$config_file" 2>/dev/null &&\
+  echo "# zgoc config file
+GPU_PROFILE_PATH=profiles/gpu
+GPU_MEM_PATH=profiles/mem
+GPU_POWER_PATH=profiles/power
 GPU_NAME=
 GPU_PCI_ID=
 GPU_AUTOMEMFIX=true
 GPU_MIN_POWER=30
-FANC_PROFILE_PATH=/usr/share/z/zgoc/profiles/fan
+FANC_PROFILE_PATH=profiles/fan
 FANC_DEFAULT_PROFILE=default
-FANC_TIME_INTERVAL=2' > "$config_file"
+FANC_TIME_INTERVAL=2
+FANC_SMOOTH=true"  > "$config_file" 2>/dev/null
 fi
 
-profile_path=$(grep "GPU_PROFILE_PATH=" "$config_file" | cut -d '=' -f2-)
-mem_path=$(grep "GPU_MEM_PATH=" "$config_file" | cut -d '=' -f2-)
-power_path=$(grep "GPU_POWER_PATH=" "$config_file" | cut -d '=' -f2-)
-card_name=$( grep "GPU_NAME=" "$config_file" | cut -d '=' -f2-)
-pci_id=$(grep "GPU_PCI_ID=" "$config_file" | cut -d '=' -f2-)
-automemfix=$(grep "GPU_AUTOMEMFIX=" "$config_file" | cut -d '=' -f2-)
-min_power=$(grep "GPU_MIN_POWER=" "$config_file" | cut -d '=' -f2-)
-if [ ! "$automemfix" = "true" ]
+# load config file
+[ -f "$config_file" ] && . "$config_file"
+
+# default path values
+[ -z "$GPU_PROFILE_PATH" ] && GPU_PROFILE_PATH=profiles/gpu
+[ -z "$GPU_MEM_PATH" ] && GPU_MEM_PATH=profiles/mem
+[ -z "$GPU_POWER_PATH" ] && GPU_POWER_PATH=profiles/power
+
+# relative path resolution
+[ $(echo "$GPU_PROFILE_PATH" | cut -c1) != '/' ] && GPU_PROFILE_PATH="$config_path/$GPU_PROFILE_PATH"
+[ $(echo "$GPU_MEM_PATH" | cut -c1) != '/' ] && GPU_MEM_PATH="$config_path/$GPU_MEM_PATH"
+[ $(echo "$GPU_POWER_PATH" | cut -c1) != '/' ] && GPU_POWER_PATH="$config_path/$GPU_POWER_PATH"
+
+if [ "$GPU_AUTOMEMFIX" != "true" ]
 then
-  automemfix=""
+  GPU_AUTOMEMFIX=""
 fi
 
 usage() {
 echo "Usage: zgoc <arguments>"
 echo "Arguments:"
-echo "  print       : show current state"
-echo "  gpu         : GPU overclocking"
-echo "  mem         : memory overclocking"
-echo "  apply       : apply GPU and memory profiles"
-echo "  reset       : reset GPU and memory to stock values"
-echo "  memfix      : fix screen artifacting caused by low memory state"
-echo "  power       : power cap"
+echo "  print       show current state"
+echo "  gpu         GPU overclocking"
+echo "  mem         memory overclocking"
+echo "  apply       apply GPU and memory profiles"
+echo "  reset       reset GPU and memory to stock values"
+echo "  memfix      fix screen artifacting caused by low memory state"
+echo "  power       power cap"
 echo ""
 echo "Config file: $config_file"
 }
@@ -162,7 +172,7 @@ apply () {
   root_check
   echo "c" > "$path/device/pp_od_clk_voltage"
   echo "Profile applied"
-  if [ -n "$automemfix" ] ; then
+  if [ -n "$GPU_AUTOMEMFIX" ] ; then
     force_mem_state_high
   fi
 }
@@ -179,7 +189,7 @@ apply_power () {
   if ! echo "$1" | grep -Eq '^[0-9]+$' ; then
     echo "Invalid power value" >&2
     exit 2
-  elif [ "$1" -lt "$min_power" ] ; then
+  elif [ "$1" -lt "$GPU_MIN_POWER" ] ; then
     echo "Power value too low" >&2
     exit 2
   elif [ -z "$1" ] ; then
@@ -212,22 +222,22 @@ set_profile () {
 ## locate device path
 if [ "$(lspci | grep -c VGA)" -gt 1 ]
 then
-  if [ -z "$card_name" ] && [ -z "$pci_id" ] ; then
+  if [ -z "$GPU_NAME" ] && [ -z "$GPU_PCI_ID" ] ; then
     error "Several GPUs are present and no GPU is specified"
     error "Edit GPU_NAME or GPU_PCI_ID in '$config_file'"
     exit 20
   fi
-  if [ -z "$pci_id" ] ; then
-    pci_id=$(lspci | grep  VGA | grep "$card_name" | cut -d ' ' -f1)
-    if [ "$(echo "$pci_id" | wc -l)" -gt 1 ] ; then
+  if [ -z "$GPU_PCI_ID" ] ; then
+    GPU_PCI_ID=$(lspci | grep  VGA | grep "$GPU_NAME" | cut -d ' ' -f1)
+    if [ "$(echo "$GPU_PCI_ID" | wc -l)" -gt 1 ] ; then
       error "More than one name match for GPU"
       exit 21
-    elif [ "$(echo "$pci_id" | wc -l)" -lt 1 ] ; then
+    elif [ "$(echo "$GPU_PCI_ID" | wc -l)" -lt 1 ] ; then
       error "No name match for GPU"
       exit 22
     fi
   fi
-  if ! path=$(ls -l /sys/class/drm/card? | grep "$pci_id" | tr -s ' ' | cut -d ' ' -f9) ; then
+  if ! path=$(ls -l /sys/class/drm/card? | grep "$GPU_PCI_ID" | tr -s ' ' | cut -d ' ' -f9) ; then
     error "Error finding pci device"
     echo 23
   fi
@@ -253,85 +263,46 @@ fi
 # read arguments
 shift $((OPTIND-1))
 
-if [ "$#" -gt 0 ]
-then
-
-  if [ "$1" = "reset" ]; then
-    reset_stock
-
-  elif [ "$1" = "gpu" ]; then
-
-    if [ "$2" = "profile" ]; then
-      if [ -f "$profile_path/$3" ] ; then
-        set_profile gpu < "$profile_path/$3"
-      else
-        if ! cd "$profile_path" 2>/dev/null ; then
-          exit
-        fi
-        ls -p | grep -v /
-      fi
-    elif [ "$2" = "file" ]; then
-      set_profile gpu < "$3"
-      apply
-    else
-      echo "zgoc gpu <profile/file>"
-    fi
-
-  elif [ "$1" = "mem" ]; then
-
-    if [ "$2" = "profile" ]; then
-      if [ -f "$mem_path/$3" ] ; then
-        set_profile mem < "$mem_path/$3"
-      else
-        if ! cd "$mem_path" 2>/dev/null ; then
-          exit
-        fi
-        ls -p | grep -v /
-      fi
-    elif [ "$2" = "file" ]; then
-      set_profile mem < "$3"
-      apply
-    else
-      echo "zgoc mem <profile/file>"
-    fi
-
-  elif [ "$1" = "power" ] ; then
-
+case "$1" in
+  reset)  reset_stock ;;
+  apply)  apply ;;
+  memfix) force_mem_state_high ;;
+  print)  cat $path/device/pp_od_clk_voltage ;;
+  gpu)
+    case "$2" in
+      profile)
+        if [ -f "$GPU_PROFILE_PATH/$3" ]
+        then set_profile gpu < "$GPU_PROFILE_PATH/$3"
+        else cd "$GPU_PROFILE_PATH" 2>/dev/null && ls -p | grep -v /
+        fi ;;
+      file) set_profile gpu < "$3" && apply ;;
+      *) echo "zgoc gpu <profile/file>" && exit 1 ;;
+    esac
+    ;;
+  mem)
+    case "$2" in
+      profile)
+        if [ -f "$GPU_MEM_PATH/$3" ]
+        then set_profile mem < "$GPU_MEM_PATH/$3"
+        else cd "$GPU_MEM_PATH" && ls -p | grep -v /
+        fi ;;
+      file)  set_profile mem < "$3" && apply ;;
+      *) echo "zgoc mem <profile/file>" && exit 1
+    esac
+  ;;
+  power)
     kernel_req 4 20
-
-    if [ "$2" = "profile" ]; then
-      if [ -f "$power_path/$3" ] ; then
-        apply_power "$(cat "$power_path/$3")"
-      else
-        if ! cd "$power_path" 2>/dev/null ; then
-          exit
-        fi
-        ls -p | grep -v /
-      fi
-    elif [ "$2" = "max" ]; then
-      apply_power "$(val_convert 6 0 < $hwmon/power1_cap_max)"
-    elif [ "$2" = "set" ]; then
-      apply_power "$3"
-    elif [ "$2" = "print" ]; then
-      echo $(val_convert 6 0 < $hwmon/power1_cap) W
-    else
-      echo "zgoc power <max/profile/set/print>"
-    fi
-
-  elif [ "$1" = "apply" ]; then
-    apply
-
-  elif [ "$1" = "memfix" ]; then
-    force_mem_state_high
-
-  elif [ "$1" = "print" ]; then
-    cat $path/device/pp_od_clk_voltage
-
-  else
-    usage
-  fi
-else
-  usage
-fi
-
-exit 0
+    case "$2" in
+      profile)
+        if [ -f "$GPU_POWER_PATH/$3" ]
+        then apply_power "$(cat "$GPU_POWER_PATH/$3")"
+        else cd "$GPU_POWER_PATH" 2>/dev/null && ls -p | grep -v /
+        fi ;;
+      max) apply_power "$(val_convert 6 0 < $hwmon/power1_cap_max)" ;;
+      set) apply_power "$3" ;;
+      print) echo $(val_convert 6 0 < $hwmon/power1_cap) W ;;
+      *) echo "zgoc power <max/profile/set/print>" && exit 1
+    esac
+  ;;
+  *) usage && exit 1;;
+esac

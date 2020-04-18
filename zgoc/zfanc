@@ -1,35 +1,54 @@
 #!/bin/bash
 
-config_file="/usr/share/z/config/zgoc.conf"
-card_name=$( grep "GPU_NAME=" "$config_file" | cut -d '=' -f2-)
-pci_id=$(grep "GPU_PCI_ID=" "$config_file" | cut -d '=' -f2-)
-profile_path=$(grep "FANC_PROFILE_PATH=" "$config_file" | cut -d '=' -f2-)
-default_profile=$(grep "FANC_DEFAULT_PROFILE=" "$config_file" | cut -d '=' -f2-)
-time_interval=$(grep "FANC_TIME_INTERVAL=" "$config_file" | cut -d '=' -f2-)
+# config file
+config_path="/etc/zgoc"
+config_file="$config_path/zgoc.conf"
 
-temps=( 50  60  70  80  85  90  95  ) # in °C
-fans=(   0  15  30  40  55  75  100 ) # in %
+# load config
+[ -f "$config_file" ] && . "$config_file"
 
-if [ "${#temps[@]}" -ne "${#fans[@]}" ]
-then
-  error "Amount of temperature and pwm values does not match"
-  exit 30
-fi
+# default conf
+[ -z "$FANC_TIME_INTERVAL" ] && FANC_TIME_INTERVAL=2
+[ -z "$FANC_DEFAULT_PROFILE" ] && FANC_DEFAULT_PROFILE=2
+[ -z "$FANC_PROFILE_PATH" ] && FANC_PROFILE_PATH=profiles/power
+[ $(echo "$FANC_PROFILE_PATH" | cut -c1) != '/' ] && FANC_PROFILE_PATH="$config_path/$FANC_PROFILE_PATH"
+
+# load profile
+profile=$FANC_PROFILE_PATH/$FANC_DEFAULT_PROFILE
+[ ! -f "$profile" ] && echo "'$profile' not found" >&2 && exit 1
+
+{
+  read -r temps
+  read -r fans
+} < "$profile"
+
+NT=$(echo "$temps" | awk '{print NF}')
+NF=$(echo "$fans" | awk '{print NF}')
 
 error () {
     printf "\033[1;31m%s\033[0m\n" "$1" >&2
 }
 
-file_report ()
+if [ "$NT" -ne "$NF" ]
+then
+  error "Amount of temperature and pwm values do not match"
+  exit 30
+fi
+
+# $1 = array , $2 = rank
+getval()
+{
+  echo "$1" | awk "{print \$$(($2+1))}"
+}
+
+file_report()
 {
   if [ -f "$(pwd)/$1" ]
   then
-    echo -n "$(pwd)/$1 = "
-    cat "$(pwd)/$1"
+    echo "$(pwd)/$1 = $(cat "$(pwd)/$1")"
   elif [ -f "$1" ]
   then
-    echo -n "$1 = "
-    cat "$1"
+    echo "$1 = $(cat "$1")"
   else
     error "File $1 from $(pwd) unaccessible"
   fi
@@ -48,28 +67,28 @@ file_write ()
 _stop() {
   echo ""
   file_write 2 pwm1_enable
-  exit
+  exit $1
 }
 
 if [[ $(lspci | grep -c VGA) -gt 1 ]]
 then
-  if [[ -z "$card_name" ]] && [[ -z "$pci_id" ]] ; then
+  if [[ -z "$GPU_NAME" ]] && [[ -z "$GPU_PCI_ID" ]] ; then
     error "Several GPUs are present and no GPU is specified"
     exit 20
   fi
-  if [ -z "$pci_id" ] ; then
-    pci_id=$(lspci | grep VGA | grep "$card_name" | cut -d ' ' -f1)
-    if [ "$(echo "$pci_id" | wc -l)" -gt 1 ] ; then
+  if [ -z "$GPU_PCI_ID" ] ; then
+    GPU_PCI_ID=$(lspci | grep VGA | grep "$GPU_NAME" | cut -d ' ' -f1)
+    if [ "$(echo "$GPU_PCI_ID" | wc -l)" -gt 1 ] ; then
       error "More than one name match"
       exit 21
-    elif [ "$(echo "$pci_id" | wc -l)" -lt 1 ] ; then
+    elif [ "$(echo "$GPU_PCI_ID" | wc -l)" -lt 1 ] ; then
       error "No name match"
       exit 22
     fi
   fi
   cd /sys/class/drm || exit
 
-  if ! cd "$(ls -l card? | grep "$pci_id" | tr -s ' ' | cut -d ' ' -f9)"
+  if ! cd "$(ls -l card? | grep "$GPU_PCI_ID" | tr -s ' ' | cut -d ' ' -f9)"
   then
     error "Error finding pci device"
     echo 23
@@ -99,34 +118,42 @@ file_write 1 pwm1_enable
 
 while true
 do
-  temp=$(zgpu -g0 -Wnt | cut -d '.' -f1)
+  sleep "$FANC_TIME_INTERVAL" &
+  temp=$(zgpu -g0 -Wnt -i0 | cut -d '.' -f1 | tr -d '\n')
   I=1
-  if [ "$temp" -lt "${temps[0]}" ]
+  if [ "$temp" -lt "$(getval "$temps" 0)" ]
   then
-    fan=${fans[0]}
+    fan=$(getval "$fans" 0)
   else
-    while [[ $I -lt "${#temps[@]}" ]]
+    while [ $I -lt $NT ]
     do
-      if [ "$temp" -lt "${temps[$I]}" ]
+      if [ $temp -lt $(getval "$temps" $I) ]
       then
-        LOWERTEMP=${temps[$I-1]}
-        HIGHERTEMP=${temps[$I]}
-        LOWERPWM=${fans[$I-1]}
-        HIGHERPWM=${fans[$I]}
+        LOWERTEMP=$(getval "$temps" $((I-1)))
+        HIGHERTEMP=$(getval "$temps" $I)
+        LOWERPWM=$(getval "$fans" $((I-1)))
+        HIGHERPWM=$(getval "$fans" $I)
         fan=$(echo "( ( $temp - $LOWERTEMP ) * ( $HIGHERPWM - $LOWERPWM ) / ( $HIGHERTEMP - $LOWERTEMP ) ) + $LOWERPWM" | bc)
-        I=${#temps[@]}
+        I=$NT
       fi
-      I=$((I + 1))
+      I=$(($I + 1))
     done
   fi
   if [ -z "$fan" ]
   then
-    fan=${fans[$((I - 1))]}
+    fan=$(getval "$fans" $((I-1)))
   fi
-  fan_max=$(cat pwm1_max)
-  fan_min=$(cat pwm1_min)
-  file_write "$(echo "( ( $fan * ($fan_max - $fan_min) ) / 100 ) + $fan_min" | bc)" pwm1
-  sleep "$time_interval"
+  # get min/max values
+  fan_max=$(cat pwm1_max) && fan_min=$(cat pwm1_min) || _stop 1
+  # scale to min/max
+  fan=$(echo "( ( $fan * ($fan_max - $fan_min) ) / 100 ) + $fan_min" | bc)
+  # smooth with oldval
+  [ -z "$oldfan" ] && oldfan=$fan
+  [ "$FANC_SMOOTH" = "true" ] && fan=$(echo "($oldfan + $fan) / 2" | bc)
+  oldfan=$fan
+  # write
+  file_write "$fan" pwm1
+  wait $(jobs -p)
 done
 
-exit 0
+_stop 0
