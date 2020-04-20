@@ -1,0 +1,340 @@
+#!/bin/sh
+
+fname=$(basename "$0")
+usage()
+{
+  echo "$fname <operation>
+[Global Operations]:
+  list-files            List eligible files in data path. Shortcut 'lsf'
+  cache-clear           Delete all cached keys. Shortcut 'cc'
+  help                  Display help
+[File Operations]:
+  ls [path]             List contents at given path
+  tree                  List all contents
+  create                Create a file or change key
+  get <path>            Get the value of target
+  copy <path>           Copy the target value to clipboard. Shortcut 'x'
+  set <path> <value>    Set the value of target
+  new <path> [length]   Generate a random password at target
+  rm <path>             Delete the target
+
+[Config]:
+ *Variable*              *Default value*                        *Description*
+ ----------------------------------------------------------------------------
+  CONFIGFILE              '\$XDG_CONFIG_HOME/zpass/defaut.conf'   Path to the config file to load
+  ZPASS_PATH              '\$XDG_DATA_HOME/zpass'                 Folder containing password files
+  ZPASS_CACHE_PATH        '\$XDG_CACHE_HOME/zpass'                Path used for caching keys
+  ZPASS_FILE              'default'                              File to use for operations
+  ZPASS_KEY                                                      Key to use for encrypting/decrypting files
+  ZPASS_KEY_CACHE_TIME    '1'                                    Time a key stays in cache for decrypting, in minutes
+  ZPASS_CLIPBOARD_TIME    '30'                                   Time until clipboard gets cleared after copy, in seconds
+  ZPASS_UNK_OP_CALL       'copy'                                 Operation to call on unrecognized first argument
+
+All operations can be shortened to their first char unless specified
+Unknown operations will perform the operation described in `ZPASS_UNK_OP_CALL`
+"
+}
+
+# XDG config
+datapath="$HOME/.local/share/zpass"
+cachepath="$HOME/.cache/zpass"
+configpath="$HOME/.config/zpass"
+[ -n "$XDG_DATA_HOME" ] && datapath="$XDG_DATA_HOME/zpass"
+[ -n "$XDG_CONFIG_HOME" ] && configpath="$XDG_CONFIG_HOME/zpass"
+[ -n "$XDG_CACHE_HOME" ] && cachepath="$XDG_CACHE_HOME/zpass"
+[ -z "$CONFIGFILE" ] && CONFIGFILE="$configpath/default.conf"
+
+# load config file
+[ -f "$CONFIGFILE" ] && { . "$CONFIGFILE" || exit $? ; }
+
+# resolve zpass_path
+[ -n "$ZPASS_PATH" ] && datapath="$ZPASS_PATH"
+
+# default ZPASS config
+[ -z "$ZPASS_FILE" ] && ZPASS_FILE=default
+[ -z "$ZPASS_EXTENSION" ] && ZPASS_EXTENSION=.tar.gpg
+[ -z "$ZPASS_KEY_CACHE_TIME" ] && ZPASS_KEY_CACHE_TIME=1 # in minutes
+[ -z "$ZPASS_CLIPBOARD_TIME" ] && ZPASS_CLIPBOARD_TIME=30 # in seconds
+[ -z "$ZPASS_UNK_OP_CALL" ] && ZPASS_UNK_OP_CALL="copy"
+
+file="$datapath/$ZPASS_FILE$ZPASS_EXTENSION"
+
+mkdir -p "$datapath" 2>/dev/null || error 1 "Could not create '$datapath'"
+mkdir -p "$cachepath" 2>/dev/null && chmod -R go-rwx "$cachepath" 2>/dev/null
+
+escape_chars() {
+  echo "$*" | sed 's|\.|\\\.|g;s|/|\\/|g'
+}
+
+error(){
+  ret=$1 && shift 1 && echo $* >&2 && exit $ret
+}
+
+randalnum() {
+  tr -cd '[a-zA-Z]' < /dev/urandom | head -c $1
+}
+
+randpass() {
+  len=$1
+  [ -z "$len" ] && len=20
+  tr -cd 'a-zA-Z0-9!-.' < /dev/urandom | head -c $len
+}
+
+keyfile(){
+  printf "%s.key" "$(echo "$file" | md5sum | cut -d' ' -f1)"
+}
+
+# $1 = delay in sec
+clipboard_clear() {
+  if [ -n "$1" ]
+  then
+    for I in $(screen -ls | grep "zpass_clipboard" | awk '{print $1}')
+    do
+      screen -S "$I" -X stuff "^C"
+    done
+    screen -dmS "zpass_clipboard" sh -c "sleep $1 ; xclip -selection clipboard < /dev/null" # call zpass for autoclean
+  else
+    xclip -selection clipboard < /dev/null
+  fi
+}
+
+# $1 = delay in min
+delete_cache() {
+  if [ "$1" -gt 0 ] 2>/dev/null
+  then
+    for I in $(screen -ls | grep "zpass_$(keyfile)" | awk '{print $1}')
+    do
+      screen -S "$I" -X stuff "^C"
+    done
+    screen -dmS "zpass_$(keyfile)" sh -c "sleep $(($1*60)) ; $0" # call zpass for autoclean
+  else
+    rm -f "$cachepath/$(keyfile)" 2>/dev/null
+  fi
+}
+
+clean_cache() {
+  # key cache
+  find "$cachepath" -type f -mmin +"$ZPASS_KEY_CACHE_TIME" -exec rm '{}' ';'
+  # tmp folders older than 1 min
+  rm -rd $(find /tmp -maxdepth 1 -type d -name "zpass_*" ! -mmin 1)
+}
+
+clear_cache() {
+  rm "$cachepath/*"
+}
+
+write_cache() {
+  echo "$1" > "$cachepath/$(keyfile)"
+  delete_cache $ZPASS_KEY_CACHE_TIME
+}
+
+get_key_cached() {
+  cat "$cachepath/$(keyfile)" 2>/dev/null
+}
+
+# $1 = prompt message
+prompt_password() {
+  if [ -n "$DISPLAY" ]
+  then
+    if which kdialog >/dev/null 2>&2
+    then kdialog --title "zpass" --password "$1" 2>/dev/null
+    else zenity --title "zpass" --password 2>/dev/null
+    fi
+  else
+    printf "%s:" "$1" >&2
+    stty -echo
+    read -r PASSWORD || return $?
+    stty echo
+    printf "\n" >&2
+    echo $PASSWORD
+  fi
+}
+
+# $1 = message
+error_dialog() {
+  if which kdialog >/dev/null 2>&2
+  then kdialog --title "zpass" --error "$1" 2>/dev/null
+  else zenity --title "zpass" --error --text="$1" 2>/dev/null
+  fi
+}
+
+new_key_with_confirm()
+{
+  [ -n "$ZPASS_KEY" ] && echo "$ZPASS_KEY" && return 0
+  pass1=1
+  pass2=2
+  while [ "$pass1" != "$pass2" ]
+  do
+    pass1=$(prompt_password "Enter new key") || error 100 "Cancelled"
+    pass2=$(prompt_password "Confirm key") || error 100 "Cancelled"
+    [ "$pass1" != "$pass2" ] && error_dialog "Passwords do not match.\nTry again"
+  done
+  write_cache "$pass1" &
+  echo "$pass1"
+}
+
+# $1 = prompt message
+get_key() {
+  message="Enter key"
+  [ -n "$1" ] && message="$1"
+  key=$(prompt_password "$message") || return $?
+  write_cache "$key" &
+  echo "$key"
+}
+
+# $1 = key , $2 = keyfile to write
+decrypt_with_key()
+{
+  gpg --pinentry-mode loopback --batch --passphrase "$1" -o - -d "$file" 2>/dev/null && ret=$? && [ -n "$2" ] && echo "$1" > "$2"
+  return $ret
+}
+
+# $1 = keyfile to write
+decrypt()
+{
+  [ ! -f "$file" ] && return 1 # no file
+
+  if [ -n "$ZPASS_KEY" ]
+  then # key given already
+    decrypt_with_key "$ZPASS_KEY" "$1" ; ret=$?
+  else # prompt for key
+    # attempt decrypt from cache
+    key=$(get_key_cached) && decrypt_with_key "$key" "$1"
+    ret=$?
+    if [ $ret -ne 0 ]
+    then
+      # cache was incorrect: delete
+      delete_cache >/dev/null 2>&1
+      # try loop
+      tries=0
+      while [ $ret -ne 0 ] && [ $tries -lt 3 ]
+      do
+        key=$(get_key) || { echo "Cancelled" >&2 && return 100 ; }
+        tries=$((tries+1))
+        decrypt_with_key "$key" "$1" ; ret=$?
+      done
+    fi
+  fi
+  [ $ret -ne 0 ] && { echo "Could not decrypt '$file'" >&2 && return $ret ; }
+}
+
+# $1 = key
+encrypt() {
+  gpg --pinentry-mode loopback --batch --passphrase "$1" -o - -c -
+}
+
+# $1 = tmpdir , $2 = keyfile
+unpack(){
+  rm -rf "$1" || return $?
+  mkdir -p "$1" || return $?
+  (
+    cd "$1"
+    { decrypt "$2" || return $?; } | tar -xf - 2>/dev/null || return $?
+  )
+}
+
+# $1 = tmpdir , $2 = keyfile
+pack()
+{
+  # clean empty dirs
+  archive="archive_$(randalnum 5)"
+  find "$1" -empty -type d -delete
+  (
+    cd "$1"
+    if [ -n "$2" ]
+    then
+      key=$(cat "$2") && rm "$2" || return $?
+    else
+      key=$(new_key_with_confirm) || return $?
+    fi
+    tar -cf - * | encrypt "$key" > "$1/$archive" || return $?
+  ) || return $?
+  mv -f "$1/$archive" "$file"
+}
+
+# $1 = file , $2 = content
+setval()
+{
+  # tmp files
+  tmpdir="/tmp/zpass_$(randalnum 5)"
+  keyfile="$tmpdir/$(randalnum 5).key"
+  # operation
+  unpack "$tmpdir" "$keyfile" || return $?
+  [ -n $(dirname "$1") ] && mkdir -p "$tmpdir/$(dirname "$1")" 2>/dev/null # create dir
+  echo "$2" > "$tmpdir/$1" || return $? # set target data
+  pack "$tmpdir" "$keyfile" || return $?
+  rm -rf "$tmpdir"
+}
+
+remove()
+{
+  # tmp files
+  tmpdir="/tmp/zpass_$(randalnum 5)"
+  keyfile="$tmpdir/$(randalnum 5).key"
+  # operation
+  unpack "$tmpdir" "$keyfile" || return $?
+  rm "$tmpdir/$1" # delete target
+  pack "$tmpdir" "$keyfile" || return $?
+  rm -rf "$tmpdir"
+}
+
+create() {
+  if [ -f "$file" ]
+  then
+    tmpdir="/tmp/zpass_$(randalnum 5)"
+    # pack n repack with no tmp key: create new
+    unpack "$tmpdir" || return $?
+    pack "$tmpdir" || return $?
+    rm -rf "$tmpdir"
+  else
+    [ -z "$ZPASS_KEY" ] && ZPASS_KEY=$(new_key_with_confirm) || { echo "Cancelled" >&2 && return 100 ; }
+    tar -cf - -T /dev/null | encrypt "$ZPASS_KEY" 2>/dev/null > "$file" || { echo "Encryption error" >&2 && return 1 ; }
+  fi
+}
+
+list()
+{
+  tree=$(decrypt | tar -tf - 2>/dev/null) || return $?
+  ret="$tree"
+  if [ -n "$1" ]
+  then
+    # file
+    ret=$(echo "$tree" | sed -n "/\/$/d;/^$(escape_chars "$1")\$/p")
+    # folder
+    [ -z "$ret" ] && in=$(echo "$1/" | tr -s '/') && ret=$(echo "$tree" | grep "^$in" | sed "s|^$in||g")
+  fi
+  echo "$ret" | sed "/\/..*/d;/^\$/d"
+}
+
+tree()
+{
+  tree=$(decrypt | tar -tf - 2>/dev/null) || return $?
+  echo "$tree" | sed '/\/$/d;/^$/d'
+}
+
+get(){
+  { decrypt || return $?; } | tar -xOf - "$1" 2>/dev/null
+}
+
+copy()
+{
+  { get "$1" || return $?; } | tr -d '\n' | xclip -selection clipboard && clipboard_clear "$ZPASS_CLIPBOARD_TIME"
+}
+
+clean_cache 2>/dev/null
+[ -z "$1" ] && usage && return 1
+
+case $1 in
+  lsf|list-files)   ls "$datapath" 2>/dev/null | grep "$ZPASS_EXTENSION\$" | sed "s/$(escape_chars "$ZPASS_EXTENSION")\$//g" ;;
+  cc|cache-clear)   clear_cache 2>/dev/null ;;
+  l|ls|list)        list $2  ;;
+  t|tree)           tree     ;;
+  c|create)         create   ;;
+  g|get)            get "$2" ;;
+  s|set)            setval "$2" "$3" ;;
+  n|new)            setval "$2" "$(randpass $3)" ;;
+  r|rm)             remove "$2" "$3" ;;
+  x|copy|clipboard) copy "$2" ;;
+  h|help)           usage ;;
+  *)                "$0" $ZPASS_UNK_OP_CALL "$@" ;;
+esac
