@@ -93,10 +93,13 @@ world_backup ()
   FILE="$1"
   echo "$1" | grep -q '.tar.gz$' || FILE="$FILE.tar.gz" # add .tar.gz extension if not present
 
+  gz_command=gzip
+  which pigz >/dev/null && gz_command=pigz
+
   echo "Backing up world to $FILE"
-  if [ -n "$(command -v pv)" ] # fancy progress bar
-  then tar -cf - "$world" -P | pv -s "$(du -sb "$world" | awk '{print $1}')" | gzip > "$BACKUP_PATH/$FILE"
-  else tar -cvzf "$BACKUP_PATH/$FILE" "$world"
+  if which pv >/dev/null # fancy progress bar
+  then tar -cf - "$world" | pv -s "$(du -sb "$world" | awk '{print $1}')" | $gz_command > "$BACKUP_PATH/$FILE"
+  else tar -cvf - "$world" | $gz_command > "$BACKUP_PATH/$FILE"
   fi
 }
 
