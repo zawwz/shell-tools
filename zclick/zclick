@@ -1,15 +1,19 @@
 #!/bin/sh
 
-usage ()
+fname=$(basename "$0")
+usage()
 {
-  echo "zclick [options]"
-  echo ""
-  echo "Options:"
-  echo "  -h        Display this help"
-  echo "  -d        Run daemon"
-  echo "  -c <id>   Click ID: 1:left 2:middle 3:right."
-  echo "  -i <ms>   Interval between clicks in ms, 0 for no clicking. Default 20."
-  echo "  -t        Toggle clicking. Sets interval to 0 if current value was != 0"
+  echo "$fname [options] [clickID]
+Automatic clicker. Click ID is: 1=left , 2=middle , 3=right
+To run the clicker, you need to start the daemon and then run the commands
+
+[Daemon Options]
+  -d        Run daemon
+  -b <ms>   Time per block of operation in ms. Default 100"
+[Client options]
+  -h        Display this help
+  -i <ms>   Interval between clicks in ms, 0 for no clicking. Default 20
+  -t        Toggle clicking. Sets interval to 0 if current value was != 0
 }
 
 error () {
@@ -18,6 +22,7 @@ error () {
 
 arg_i=20
 block_time=100
+
 
 if [ -z "$FOLDER" ]
 then
@@ -29,48 +34,28 @@ then
   fi
 fi
 
-while getopts ":hc:i:dt" opt;
+while getopts ":hi:b:dt" opt;
 do
   case $opt in
     h)
       usage
       exit 0
       ;;
-    c)
-      if ! echo "$OPTARG" | grep -Eq '^[0-9]+$'
-      then
-        error "c argument has to be an integer"
-        exit 2
-      fi
-      if [ -z "$OPTARG" ]
-      then
-        error "c needs an argument"
-        exit 2
-      fi
-      if [ "$OPTARG" -lt 1 ]
-      then
-        error "c argument has to be greater than 0"
-        exit 2
-      fi
-      arg_c=$OPTARG
-      ;;
     i)
-      if ! echo "$OPTARG" | grep -Eq '^[0-9]+$'
+      if ! [ "$OPTARG" -ge 0 ] 2>/dev/null
       then
-        error "i argument has to be an integer"
-        exit 2
-      fi
-      if [ -z "$OPTARG" ]
-      then
-        error "i needs an argument"
-        exit 2
-      fi
-      if [ "$OPTARG" -lt 1 ]
-      then
-        error "i argument has to be greater than 0"
+        error "i argument has to be positive"
         exit 2
       fi
       arg_i=$OPTARG
+      ;;
+    b)
+      if ! [ "$OPTARG" -ge 1 ] 2>/dev/null
+      then
+        error "b argument has to be strictly positive"
+        exit 2
+      fi
+      block_time=$OPTARG
       ;;
     d)
       opt_d=y
@@ -86,12 +71,23 @@ do
     esac
 done
 
+shift $((OPTIND-1))
+
+if [ -n "$1" ] && ! [ "$1" -gt 0 ] 2>/dev/null
+then
+  error "Click ID has to be a strictly positive integer"
+  exit 2
+fi
+cid=$1
+
+
 mkdir -p "$FOLDER"
 
 if [ -n "$opt_d" ]
 then
   ## DAEMON
   # reset status of all clicks
+  stime=$(echo "scale=2;$block_time/1000.0" | bc)
   for I in "$FOLDER"/*
   do
     echo "0" > "$I"
@@ -99,21 +95,25 @@ then
   # DAEMON
   while true
   do
+    sleep $stime &
     for I in "$FOLDER"/*
     do
       interval=$(cat "$I")
       click_id=$(echo "$I" | rev | cut -d'/' -f1 | rev)
       if [ "$interval" != "0" ]
       then
-        xdotool click --repeat "$(echo "$block_time / $arg_i" | bc)" --delay "$interval" "$click_id"
+        N=$(($block_time / $interval))
+        [ "$N" -lt 1 ] && N=1
+        xdotool click --repeat $N --delay $interval $click_id &
       fi
     done
+    wait $(jobs -p)
   done
 
 else
   ## CONTROL
 
-  if [ -z "$arg_c" ]
+  if [ -z "$cid" ]
   then
     usage
     exit
@@ -122,15 +122,15 @@ else
   if [ -n "$opt_t" ]
   then
     #toggle
-    if [ "$(cat "$FOLDER/$arg_c")" != "0" ] ; then
-      echo 0 > "$FOLDER/$arg_c"
+    if [ "$(cat "$FOLDER/$cid")" != "0" ] ; then
+      echo 0 > "$FOLDER/$cid"
     else
-      echo "$arg_i" > "$FOLDER/$arg_c"
+      echo "$arg_i" > "$FOLDER/$cid"
     fi
 
   else
     #set
-    echo "$arg_i" > "$FOLDER/$arg_c"
+    echo "$arg_i" > "$FOLDER/$cid"
   fi
 
 fi
