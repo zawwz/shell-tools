@@ -335,6 +335,6 @@ case $1 in
   n|new)            setval "$2" "$(randpass $3)" ;;
   r|rm)             remove "$2" "$3" ;;
   x|copy|clipboard) copy "$2" ;;
-  -h|h|help)           usage ;;
+  -h|h|help)        usage ;;
   *)                [ -n "$ZPASS_UNK_OP_CALL" ] && "$0" $ZPASS_UNK_OP_CALL "$@" ;;
 esac
