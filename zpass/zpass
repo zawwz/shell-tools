@@ -31,7 +31,7 @@ usage()
   ZPASS_UNK_OP_CALL       'copy'                                 Operation to call on unrecognized first argument
 
 All operations can be shortened to their first char unless specified
-Unknown operations will perform the operation described in `ZPASS_UNK_OP_CALL`
+Unknown first argument will perform the operation described in 'ZPASS_UNK_OP_CALL' on that argument
 "
 }
 
@@ -335,6 +335,6 @@ case $1 in
   n|new)            setval "$2" "$(randpass $3)" ;;
   r|rm)             remove "$2" "$3" ;;
   x|copy|clipboard) copy "$2" ;;
-  h|help)           usage ;;
-  *)                "$0" $ZPASS_UNK_OP_CALL "$@" ;;
+  -h|h|help)           usage ;;
+  *)                [ -n "$ZPASS_UNK_OP_CALL" ] && "$0" $ZPASS_UNK_OP_CALL "$@" ;;
 esac
