@@ -1,25 +1,17 @@
 #!/bin/sh
 
 fname="$(basename "$0")"
-
-ERR=0
-
 usage()
 {
-  echo "$fname [options] <operation>"
-  echo '
+  echo "$fname <operation>
 Operations:
   gen [bin_file...]      Generate a desktop file
-  add <desktop_file...>  Add desktop file to applications
-
-Options:
-'
+  add <desktop_file...>  Add desktop file to applications"
 }
 
 gen_file()
 {
   unset name
-
   if [ -n "$1" ]
   then
     file="$1"
@@ -31,9 +23,7 @@ gen_file()
   fi
 
   desktop_file=$(echo "$name.desktop" | tr '[:upper:]' '[:lower:]')
-  if [ -f "$desktop_file" ] ; then
-    mv "$desktop_file" "$desktop_file.bak" || return $?
-  fi
+  [ -f "$desktop_file" ] && { mv "$desktop_file" "$desktop_file.bak" || return $?; }
 
   cat > "$desktop_file" << EOF
 [Desktop Entry]
@@ -51,44 +41,40 @@ add_file()
 {
   if [ -f "$1" ]
   then
-    ln -s "$(pwd)/$1" "$HOME/.local/share/applications"
+    ln -sf "$(pwd)/$1" "$HOME/.local/share/applications"
   else
     echo "'$1' is not a file" > /dev/stderr
     return 1
   fi
 }
 
-if [ $# -le 0 ]
-then
-  usage
-  exit 1
-fi
+[ $# -le 0 ] && { usage && exit 1; }
 
-if [ "$1" = "gen" ] ; then
-  if [ $# -gt 1 ]
-  then
-    shift $((OPTIND))
-    for N
-    do
-      gen_file "$N"
-    done
-  else
-    gen_file || ERR=$?
-  fi
-elif [ "$1" = "add" ] ; then
-
-  if [ $# -gt 1 ]
-  then
-    shift $((OPTIND))
-    for N
-    do
-      add_file "$N" || ERR=$?
-    done
-  else
-    echo "$fname gen <desktop_file...>" > /dev/stderr
-    exit 1
-  fi
-
-fi
-
-exit $ERR
+case $1 in
+  gen)
+    if [ $# -gt 1 ]
+    then
+      shift $((OPTIND))
+      for N
+      do
+        gen_file "$N" || exit $?
+      done
+    else
+      gen_file || exit $?
+    fi
+  ;;
+  add)
+    if [ $# -gt 1 ]
+    then
+      shift $((OPTIND))
+      for N
+      do
+        add_file "$N" || exit $?
+      done
+    else
+      echo "$fname add <desktop_file...>" > /dev/stderr
+      exit 1
+    fi
+  ;;
+  *) usage && exit 1;;
+esac
