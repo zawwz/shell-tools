@@ -44,18 +44,38 @@ configpath="$HOME/.config/zpass"
 [ -n "$XDG_CACHE_HOME" ] && cachepath="$XDG_CACHE_HOME/zpass"
 [ -z "$CONFIGFILE" ] && CONFIGFILE="$configpath/default.conf"
 
+# stash env config
+ZPASS_PATH_T=$ZPASS_PATH
+ZPASS_CACHE_PATH_T=$ZPASS_CACHE_PATH
+ZPASS_FILE_T=$ZPASS_FILE
+ZPASS_EXTENSION_T=$ZPASS_EXTENSION
+ZPASS_KEY_CACHE_TIME_T=$ZPASS_KEY_CACHE_TIME
+ZPASS_CLIPBOARD_TIME_T=$ZPASS_CLIPBOARD_TIME
+ZPASS_UNK_OP_CALL_T=$ZPASS_UNK_OP_CALL
+
 # load config file
 [ -f "$CONFIGFILE" ] && { . "$CONFIGFILE" || exit $? ; }
 
+# insert env config
+[ -n "$ZPASS_PATH_T"            ] && ZPASS_PATH=$ZPASS_PATH_T
+[ -n "$ZPASS_CACHE_PATH_T"      ] && ZPASS_CACHE_PATH=$ZPASS_CACHE_PATH_T
+[ -n "$ZPASS_FILE_T"            ] && ZPASS_FILE=$ZPASS_FILE_T
+[ -n "$ZPASS_EXTENSION_T"       ] && ZPASS_EXTENSION=$ZPASS_EXTENSION_T
+[ -n "$ZPASS_KEY_CACHE_TIME_T"  ] && ZPASS_KEY_CACHE_TIME=$ZPASS_KEY_CACHE_TIME_T
+[ -n "$ZPASS_CLIPBOARD_TIME_T"  ] && ZPASS_CLIPBOARD_TIME=$ZPASS_CLIPBOARD_TIME_T
+[ -n "$ZPASS_UNK_OP_CALL_T"     ] && ZPASS_UNK_OP_CALL=$ZPASS_UNK_OP_CALL_T
+
 # resolve zpass_path
-[ -n "$ZPASS_PATH" ] && datapath="$ZPASS_PATH"
+[ -n "$ZPASS_PATH"        ] && datapath="$ZPASS_PATH"
+[ -n "$ZPASS_CACHE_PATH"  ] && cachepath="$ZPASS_CACHE_PATH"
 
 # default ZPASS config
-[ -z "$ZPASS_FILE" ] && ZPASS_FILE=default
-[ -z "$ZPASS_EXTENSION" ] && ZPASS_EXTENSION=.tar.gpg
-[ -z "$ZPASS_KEY_CACHE_TIME" ] && ZPASS_KEY_CACHE_TIME=1 # in minutes
-[ -z "$ZPASS_CLIPBOARD_TIME" ] && ZPASS_CLIPBOARD_TIME=30 # in seconds
-[ -z "$ZPASS_UNK_OP_CALL" ] && ZPASS_UNK_OP_CALL="copy"
+[ -z "$ZPASS_FILE"            ] && ZPASS_FILE=default
+[ -z "$ZPASS_EXTENSION"       ] && ZPASS_EXTENSION=.tar.gpg
+[ -z "$ZPASS_KEY_CACHE_TIME"  ] && ZPASS_KEY_CACHE_TIME=1 # in minutes
+[ -z "$ZPASS_CLIPBOARD_TIME"  ] && ZPASS_CLIPBOARD_TIME=30 # in seconds
+[ -z "$ZPASS_UNK_OP_CALL"     ] && ZPASS_UNK_OP_CALL=copy
+
 
 file="$datapath/$ZPASS_FILE$ZPASS_EXTENSION"
 
@@ -92,7 +112,7 @@ clipboard_clear() {
     do
       screen -S "$I" -X stuff "^C"
     done
-    screen -dmS "zpass_clipboard" sh -c "sleep $1 ; xclip -selection clipboard < /dev/null" # call zpass for autoclean
+    screen -dmS "zpass_clipboard" sh -c "sleep $1 ; printf '' | xclip -selection clipboard ; sleep 1" # call zpass for autoclean
   else
     xclip -selection clipboard < /dev/null
   fi
