@@ -22,12 +22,12 @@ _done () {
   printf "\033[1;32mDone\033[0m\n\n"
 }
 warning () {
-  printf "\033[0;33m%s\033[0m\n" "$1" > /dev/stderr
+  printf "\033[0;33m%s\033[0m\n" "$1" >&2
 }
 
 abort()
 {
-  echo_red "ERROR: ABORTING" > /dev/stderr
+  echo_red "ERROR: ABORTING" >&2
   exit "$1"
 }
 
@@ -36,13 +36,13 @@ DNF_PACKAGES="gcc gcc-c++ jansson-devel openssl-devel SDL2-devel libicu-devel sp
 PACMAN_PACKAGES="gcc gcc-libs git cmake sdl2 fontconfig libzip libpng curl jansson speexdsp openssl icu duktape"
 
 echo_white "Installing packages"
-if [ -n "$(command -v apt)" ]
+if which apt >/dev/null
 then
   sudo apt install --no-install-recommends -y $APT_PACKAGES || abort $?
-elif [ -n "$(command -v dnf)" ]
+elif which dnf >/dev/null
 then
   sudo dnf install $DNF_PACKAGES || abort $?
-elif [ -n "$(command -v pacman)" ]
+elif which pacman >/dev/null
 then
   sudo pacman -S --needed $PACMAN_PACKAGES || abort $?
 else
@@ -50,26 +50,22 @@ else
 fi
 _done
 
-if [ "$DESTDIR" = "" ] ; then
-  DESTDIR='OpenRCT2'
-fi
-if [ "$SRCDIR" = "" ] ; then
-  SRCDIR='openrct2-src'
-fi
+[ -z "$DESTDIR" ] && DESTDIR='OpenRCT2'
+[ -z "$SRCDIR" ] && SRCDIR='openrct2-src'
 
 mkdir -p "$SRCDIR"
 cd "$SRCDIR" || abort $?
 
-## PULLING SOURCE ## ./$SRCDIR
+## PULLING SOURCE ## .
 echo_white "Getting source code"
-if [ -d "OpenRCT2" ]
+if [ -d "$SRCDIR" ]
 then
   echo_blue "Source code already present"
-  cd OpenRCT2 || abort $?
+  cd "$SRCDIR" || abort $?
   git pull || abort $?
 else
-  git clone https://github.com/OpenRCT2/OpenRCT2.git --depth=1 || abort $?
-  cd OpenRCT2 || abort $?
+  git clone https://github.com/OpenRCT2/OpenRCT2.git --depth=1 "$SRCDIR" || abort $?
+  cd "$SRCDIR" || abort $?
 fi
 _done
 
@@ -111,7 +107,7 @@ remove_discord_rpc()
   fi
 }
 
-## DISCORD-RPC ## ./$SCRDIR/OpenRCT2
+## DISCORD-RPC ## ./$SCRDIR
 if [ -n "$DISCORD_RPC" ]
 then
   if [ "$DISCORD_RPC" = "true" ]
@@ -133,7 +129,7 @@ else
   esac
 fi
 
-## CMAKE ## ./$SCRDIR/OpenRCT2
+## CMAKE ## ./$SCRDIR
 echo_white "Preparing build files"
 if [ -d "build" ]
 then
@@ -145,40 +141,36 @@ cd build || abort $?
 cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. || abort $?
 _done
 
-## BUILD ## ./$SCRDIR/OpenRCT2/build
+## BUILD ## ./$SCRDIR/build
 echo_white "Building binary"
 
 if ! make -j "$(nproc --all)"
 then
-  if [ -n "$DISCORDRPC" ]
-  then
-    echo_red "Compliation with discord-rpc failed. Retry without." >/dev/stderr
-    abort 1
-  else
-    abort 1
-  fi
+  [ -n "$DISCORDRPC" ] && echo_red "Compliation with discord-rpc failed. Retry without." >&2
+  abort 1
 fi
 _done
 echo_white "Building g2.dat"
 make g2 -j "$(nproc --all)" || abort $?
 _done
 
-## DOWNLOAD DATA ## ./$SCRDIR/OpenRCT2/build
+## DOWNLOAD DATA ## ./$SCRDIR/build
 echo_white "Downloading game data"
 mkdir -p temp_install || abort $?
 DESTDIR=./temp_install make install || abort $?
 _done
 
-## MAKE FOLDERS ## ./$SCRDIR/OpenRCT2/build
+## MAKE FOLDERS ## ./$SCRDIR/build
 echo_white "Making game folders"
-mkdir -p "../../../$DESTDIR" || abort $?
-mkdir -p "../../../$DESTDIR/data" || abort $?
-cp -r temp_install/usr/local/share/openrct2/* "../../../$DESTDIR/data" || abort $?
-cp "temp_install/usr/local/share/icons/hicolor/256x256/apps/openrct2.png" "../../../$DESTDIR/icon.png" || abort $?
-cp openrct2 openrct2-cli "../../../$DESTDIR" || abort $?
+mkdir -p "../../$DESTDIR" || abort $?
+mkdir -p "../../$DESTDIR/data" || abort $?
+cp -r temp_install/usr/local/share/openrct2/* "../../$DESTDIR/data" || abort $?
+cp "temp_install/usr/local/share/icons/hicolor/256x256/apps/openrct2.png" "../../$DESTDIR/icon.png" || abort $?
+mv openrct2 openrct2-cli "../../$DESTDIR" || abort $?
+rm -rf temp_install || abort $?
 _done
 
-cd "../../.." || abort $?
+cd "../.." || abort $?
 cd "$DESTDIR" || abort $?
 
 add_desktop_entry()

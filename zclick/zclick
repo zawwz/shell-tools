@@ -9,11 +9,11 @@ To run the clicker, you need to start the daemon and then run the commands
 
 [Daemon Options]
   -d        Run daemon
-  -b <ms>   Time per block of operation in ms. Default 100"
+  -b <ms>   Time per block of operation in ms. Default 100
 [Client options]
   -h        Display this help
   -i <ms>   Interval between clicks in ms, 0 for no clicking. Default 20
-  -t        Toggle clicking. Sets interval to 0 if current value was != 0
+  -t        Toggle clicking. Sets interval to 0 if current value was != 0"
 }
 
 error () {
