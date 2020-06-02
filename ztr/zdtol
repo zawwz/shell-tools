@@ -58,7 +58,20 @@ then
   exit 2
 fi
 
-_LIST=$(lsblk -lnio NAME,LABEL | tr -s ' ')
+LIST=$(lsblk -lnio NAME,LABEL | tr -s ' ')
+lsize=$(echo "$LIST" | wc -l)
+
+for I
+do
+  [ -n "$_opt_d" ] && I=${I#/dev/}
+  ret=$(echo "$LIST" | grep "^$I" | awk '{if($2){$1="";for(i=2;i<NF;i++){printf "%s ",$i};print $NF}}')
+  if [ -n "$_opt_n" ]
+  then echo "$ret" | sed -n -e "$_arg_n{p;q}"
+  else echo "$ret"
+  fi
+done
+
+exit
 
 for _I in "$@"
 do

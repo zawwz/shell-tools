@@ -2,47 +2,35 @@
 
 usage()
 {
-  echo "command | ztr [options]"
-  echo ""
-  echo "Options:"
-  echo "  -h    Display help"
-  echo "  -l    Load files in data dir"
-  echo "  -p    Generate partitions"
-  echo "  -d    Generate disks"
-  echo "  -P    Print lines"
-  echo "  -s    Print in sed script format"
+  echo "ztr [options] [file]
+Replace preconfigured text from input
+
+Options:
+  -h    Display help
+  -l    Load files in data dir
+  -p    Generate partitions
+  -d    Generate disks
+  -P    Print lines
+  -s    Print in sed script format"
 }
 
-gen_tr_lines_disk ()
+gen_tr_lines_disk()
 {
-  for I in $(ls /sys/block)
+#  find /sys/block -maxdepth 1
+  cd /sys/block
+  for I in *
   do
     _t=$(zdtol $I | head -n1)
-    if [ -n "$_t" ]
-    then
-      printf "/dev/%s:%s\n" "$I" "$(zdtol $I | head -n1)"
-    fi
+    [ -n "$_t" ] && printf "/dev/%s:%s\n" "$I" "$_t"
   done
 }
 
-gen_tr_lines_part ()
-{
-  lsblk -lnio NAME,LABEL | tr -s ' ' | while read in
-  do
-    in="$in "
-    if [ -n "$(echo "$in" | cut -d' ' -f2-)" ]
-    then
-      printf "/dev/%s:%s\n" "$(echo "$in" | cut -d' ' -f1)" "$(echo "$in" | cut -d' ' -f2- | sed -e 's/ *$//g' )"
-    fi
-  done
+gen_tr_lines_part() {
+  lsblk -lnio NAME,LABEL | awk '{if ($2 != "") {printf "/dev/%s:",$1;{for(i=2;i<=NF-1;i++){printf"%s ",$i}; print $NF;}}}'
 }
 
-gen_sed_script ()
-{
-  while read in
-  do
-    printf "s|%s|%s|g;" "$(echo "$in" | cut -d':' -f1)" "$(echo "$in" | cut -d':' -f2-)"
-  done
+gen_sed_script() {
+  awk -F ':' '{printf "s|%s|%s|g;" ,$1,$2 }' | head -c-1
 }
 
 if [ -n "$XDG_CONFIG_HOME" ]
@@ -60,21 +48,14 @@ while getopts ":hPsf:pdl" opt;
 do
   _opt=y
   case $opt in
-    h)
-      usage
-      exit 0
-      ;;
-    P)
-      _opt_P=y
-      ;;
-    s)
-      _opt_s=y
-      ;;
+    h) usage && exit 0 ;;
+    P) _opt_P=y ;;
+    s) _opt_s=y ;;
     f)
-      _opt_f=y
-      _arg_f=$OPTARG
-      _opt_data=y
-      ;;
+       _opt_f=y
+       _arg_f=$OPTARG
+       _opt_data=y
+       ;;
     d)
       _opt_d=y
       _opt_data=y
@@ -126,8 +107,7 @@ then
   LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_disk)" )"
 fi
 
-LINES=$(echo "$LINES" | sed '/^\s*$/d')
-
+LINES=$(echo "$LINES" | grep -v '^$')
 
 if [ -n "$1" ] ; then
   FILE="$1"
@@ -137,11 +117,11 @@ then
 
   if [ -n "$_opt_s" ]
   then
-    echo "$LINES" | gen_sed_script | rev | cut -c2- | rev
+    echo "$LINES" | gen_sed_script
   else
     echo "$LINES"
   fi
 
 else
-  sed "$(echo "$LINES" | gen_sed_script | rev | cut -c2- | rev)" < "$FILE"
+  sed "$(echo "$LINES" | gen_sed_script)" < "$FILE"
 fi
