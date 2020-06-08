@@ -36,13 +36,13 @@ DNF_PACKAGES="gcc gcc-c++ jansson-devel openssl-devel SDL2-devel libicu-devel sp
 PACMAN_PACKAGES="gcc gcc-libs git cmake sdl2 fontconfig libzip libpng curl jansson speexdsp openssl icu duktape"
 
 echo_white "Installing packages"
-if which apt >/dev/null
+if which apt >/dev/null 2>&1
 then
   sudo apt install --no-install-recommends -y $APT_PACKAGES || abort $?
-elif which dnf >/dev/null
+elif which dnf >/dev/null 2>&1
 then
   sudo dnf install $DNF_PACKAGES || abort $?
-elif which pacman >/dev/null
+elif which pacman >/dev/null 2>&1
 then
   sudo pacman -S --needed $PACMAN_PACKAGES || abort $?
 else
@@ -52,9 +52,6 @@ _done
 
 [ -z "$DESTDIR" ] && DESTDIR='OpenRCT2'
 [ -z "$SRCDIR" ] && SRCDIR='openrct2-src'
-
-mkdir -p "$SRCDIR"
-cd "$SRCDIR" || abort $?
 
 ## PULLING SOURCE ## .
 echo_white "Getting source code"
@@ -138,7 +135,7 @@ then
 fi
 mkdir -p build || abort $?
 cd build || abort $?
-cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. || abort $?
+cmake -DCMAKE_BUILD_TYPE=Release .. || abort $?
 _done
 
 ## BUILD ## ./$SCRDIR/build
