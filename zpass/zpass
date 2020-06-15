@@ -17,6 +17,7 @@ usage()
   set <path> <value>    Set the value of target
   new <path> [length]   Generate a random password at target
   rm <path>             Delete the target
+  rm-file               Remove the current file. Shortcut 'rmf'
 
 [Config]:
  *Variable*              *Default value*                        *Description*
@@ -293,7 +294,7 @@ remove()
   keyfile="$tmpdir/$(randalnum 5).key"
   # operation
   unpack "$tmpdir" "$keyfile" || return $?
-  rm "$tmpdir/$1" # delete target
+  rm -rf "$tmpdir/$1" # delete target
   pack "$tmpdir" "$keyfile" || return $?
   rm -rf "$tmpdir"
 }
@@ -304,11 +305,16 @@ create() {
     tmpdir="/tmp/zpass_$(randalnum 5)"
     # pack n repack with no tmp key: create new
     unpack "$tmpdir" || return $?
-    pack "$tmpdir" || return $?
+    pack "$tmpdir" || { echo "Encryption error" >&2 && return 1 ; }
     rm -rf "$tmpdir"
   else
     [ -z "$ZPASS_KEY" ] && ZPASS_KEY=$(new_key_with_confirm) || { echo "Cancelled" >&2 && return 100 ; }
-    tar -cf - -T /dev/null | encrypt "$ZPASS_KEY" 2>/dev/null > "$file" || { echo "Encryption error" >&2 && return 1 ; }
+    tar -cf - -T /dev/null | encrypt "$ZPASS_KEY" > "$file" || {
+      echo "Encryption error" >&2
+      # echo "$tmperr" >&2
+      rm "$file"
+      return 1
+    }
   fi
 }
 
@@ -333,7 +339,19 @@ tree()
 }
 
 get(){
-  { decrypt || return $?; } | tar -xOf - "$1" 2>/dev/null
+  err=0
+  tmpdir="/tmp/zpass_$(randalnum 5)" && mkdir -p "$tmpdir"
+  decrypt | tar -C "$tmpdir" -xf - || err=$?
+
+  [ "$err" -eq 0 ] && { (
+    cd "$tmpdir"
+    [ -f "$1" ] && cat "$1" && return 0
+    [ -d "$1" ] && [ -f "$1/default" ] && cat "$1/default" && return 0
+    return 2
+  ) || err=$? ; }
+
+  rm -rf "$tmpdir"
+  return $err
 }
 
 copy()
@@ -346,6 +364,7 @@ clean_cache 2>/dev/null
 
 case $1 in
   lsf|list-files)   ls "$datapath" 2>/dev/null | grep "$ZPASS_EXTENSION\$" | sed "s/$(escape_chars "$ZPASS_EXTENSION")\$//g" ;;
+  rmf|rm-file)      rm "$file" ;;
   cc|cache-clear)   clear_cache 2>/dev/null ;;
   l|ls|list)        list $2  ;;
   t|tree)           tree     ;;
