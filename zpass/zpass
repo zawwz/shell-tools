@@ -276,15 +276,19 @@ pack()
 # $1 = file , $2 = content
 setval()
 {
+  err=0
   # tmp files
   tmpdir="/tmp/zpass_$(randalnum 5)"
   keyfile="$tmpdir/$(randalnum 5).key"
   # operation
-  unpack "$tmpdir" "$keyfile" || return $?
-  [ -n $(dirname "$1") ] && mkdir -p "$tmpdir/$(dirname "$1")" 2>/dev/null # create dir
-  echo "$2" > "$tmpdir/$1" || return $? # set target data
-  pack "$tmpdir" "$keyfile" || return $?
+  (
+    unpack "$tmpdir" "$keyfile" || return $?
+    mkdir -p "$tmpdir/$(dirname "$1")" || return $? # create dir
+    echo "$2" > "$tmpdir/$1" || return $? # set target data
+    pack "$tmpdir" "$keyfile" || return $?
+  ) || err=$?
   rm -rf "$tmpdir"
+  return $err
 }
 
 remove()
