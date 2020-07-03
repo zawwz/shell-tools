@@ -2,7 +2,7 @@
 
 linuxpkgnames=""
 
-lock_file=/tmp/update.lock
+lock_file=/tmp/sysupdate.lock
 
 get_running_programs()
 {
@@ -22,17 +22,18 @@ stop()
 fetch_error()
 {
   echo "Error: Could not fetch packages" > /dev/stderr
-  kdialog --passivepopup "Error during system updates: could not fetch packages" 60 --title "System Updates"
+  znotif -T "System updates" -t 120 -m "Error during system updates: could not fetch packages"
   stop 3
 }
 
 update_error()
 {
   echo "Error: Could not upgrade system" > /dev/stderr
-  kdialog --passivepopup "Error during system updates: could not upgrade" 60 --title "System Updates"
+  znotif -T "System updates" -t 120 -m "Error during system updates: could not upgrade"
   stop 3
 }
 
+which zupdate >/dev/null || { echo "zupdate not installed" >&2; exit 4; }
 
 # Check if another process is running
 if [ -n "$(pgrep zupdate)" ] || [ -f "$lock_file" ]
@@ -41,8 +42,6 @@ then
   exit 1
 fi
 touch "$lock_file"
-
-which zupdate >/dev/null || { echo "zupdate not installed" >&2; stop 4; }
 
 # package manager specific variables
 if which apt >/dev/null 2>&1
@@ -72,17 +71,17 @@ fi
 running_programs=$(get_running_programs "$packages")
 if [ -n "$running_programs" ]
 then
-  if ! kdialog --yesno "The following running programs have recieved updates: \n$(echo "$running_programs" | sed 's|^|  -  |g')" --yes-label "Continue" --no-label "Cancel" --title "Updates"
+  if ! znotif -T "System Updates" -y -m "The following running programs have recieved updates: \n$(echo "$running_programs" | sed 's|^|  -  |g')\nProceed?"
   then
     echo "Update cancelled" > /dev/stderr
     stop 3
   fi
 fi
 
-kdialog --passivepopup "Installing updates for $size download" 10 --title "System Updates"
+znotif -T "System Updates" -t 10 -m "Installing updates for $size download"
 #update
 zupdate -yu || update_error
 #end update
-kdialog --passivepopup "Updates finished" 5 --title "System Updates"
+znotif -T "System Updates" -t 5 -m "Updates finished"
 
 stop 0
