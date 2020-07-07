@@ -2,7 +2,9 @@
 
 linuxpkgnames=""
 
-lock_file=/tmp/sysupdate.lock
+[ -z "$TMPDIR" ] && TMPDIR=/tmp
+
+lock_file="$TMPDIR/sysupdate.lock"
 
 get_running_programs()
 {
