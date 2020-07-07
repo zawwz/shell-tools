@@ -1,0 +1,203 @@
+#!/bin/sh
+
+fname=$(basename "$0")
+usage()
+{
+  echo "$fname <operation>
+Call zpass using a remote machine
+[Global Operations]:
+  list-files            List eligible files in data path. Shortcut 'lsf'
+  cache-clear           Delete all cached keys. Shortcut 'cc'
+  help                  Display help
+[File Operations]:
+  create                Create a file or change key
+  cached                Returns wether or not a key is currently cached. Shortcut 'ch'
+  ls [path]             List contents at given path
+  tree                  List all contents
+  get <path>            Get the value of target
+  copy <path>           Copy the target value to clipboard. Shortcut 'x'
+  set <path> <value>    Set the value of target
+  new <path> [length]   Generate a random password at target
+  rm <path>             Delete the target
+  rm-file               Remove the current file. Shortcut 'rmf'
+
+[Config]:
+ *Variable*              *Default value*                        *Description*
+ ----------------------------------------------------------------------------
+  CONFIGFILE              '\$XDG_CONFIG_HOME/zpass/r-defaut.conf'    Path to the config file to load
+  ZPASS_REMOTE_ADDR                                                 Key to use for encrypting/decrypting files
+  ZPASS_REMOTE_PORT       '22'                                      Port
+  ZPASS_REMOTE_COMMAND    'zpass'                                   Command to use on remote host
+  ZPASS_SSH_ID                                                      Private SSH key to use
+  ZPASS_KEY                                                         Key to use for encrypting/decrypting files
+  ZPASS_CLIPBOARD_TIME    '30'                                      Time until clipboard gets cleared after copy, in seconds
+  ZPASS_UNK_OP_CALL       'copy'                                    Operation to call on unrecognized first argument
+
+All operations can be shortened to their first char unless specified
+Unknown first argument will perform the operation described in 'ZPASS_UNK_OP_CALL' on that argument
+"
+}
+
+# XDG config
+datapath="$HOME/.local/share/zpass"
+cachepath="$HOME/.cache/zpass"
+configpath="$HOME/.config/zpass"
+[ -n "$XDG_DATA_HOME"   ] && datapath="$XDG_DATA_HOME/zpass"
+[ -n "$XDG_CONFIG_HOME" ] && configpath="$XDG_CONFIG_HOME/zpass"
+[ -n "$XDG_CACHE_HOME"  ] && cachepath="$XDG_CACHE_HOME/zpass"
+[ -z "$CONFIGFILE"      ] && CONFIGFILE="$configpath/r-default.conf"
+
+# stash env config
+ZPASS_CLIPBOARD_TIME_T=$ZPASS_CLIPBOARD_TIME
+ZPASS_UNK_OP_CALL_T=$ZPASS_UNK_OP_CALL
+ZPASS_REMOTE_ADDR_T=$ZPASS_REMOTE_ADDR
+ZPASS_REMOTE_PORT_T=$ZPASS_REMOTE_PORT
+ZPASS_REMOTE_COMMAND_T=$ZPASS_REMOTE_COMMAND
+ZPASS_SSH_ID_T=$ZPASS_SSH_ID
+
+# load config file
+[ -f "$CONFIGFILE" ] && { . "$CONFIGFILE" || exit $? ; }
+
+# insert env config
+[ -n "$ZPASS_CLIPBOARD_TIME_T"  ] && ZPASS_CLIPBOARD_TIME=$ZPASS_CLIPBOARD_TIME_T
+[ -n "$ZPASS_UNK_OP_CALL_T"     ] && ZPASS_UNK_OP_CALL=$ZPASS_UNK_OP_CALL_T
+[ -n "$ZPASS_REMOTE_ADDR_T"     ] && ZPASS_REMOTE_ADDR=$ZPASS_REMOTE_ADDR_T
+[ -n "$ZPASS_REMOTE_PORT_T"     ] && ZPASS_REMOTE_PORT=$ZPASS_REMOTE_PORT_T
+[ -n "$ZPASS_REMOTE_COMMAND_T"  ] && ZPASS_REMOTE_COMMAND=$ZPASS_REMOTE_COMMAND_T
+[ -n "$ZPASS_SSH_ID_T"          ] && ZPASS_SSH_ID=$ZPASS_SSH_ID_T
+
+# default ZPASS config
+[ -z "$ZPASS_CLIPBOARD_TIME"  ] && ZPASS_CLIPBOARD_TIME=30 # in seconds
+[ -z "$ZPASS_UNK_OP_CALL"     ] && ZPASS_UNK_OP_CALL=copy
+[ -z "$ZPASS_REMOTE_PORT"     ] && ZPASS_REMOTE_PORT=22
+[ -z "$ZPASS_REMOTE_COMMAND"  ] && ZPASS_REMOTE_COMMAND=zpass
+
+
+file="$datapath/$ZPASS_FILE$ZPASS_EXTENSION"
+
+mkdir -p "$datapath" 2>/dev/null || error 1 "Could not create '$datapath'"
+mkdir -p "$cachepath" 2>/dev/null && chmod -R go-rwx "$cachepath" 2>/dev/null
+
+escape_chars() {
+  echo "$*" | sed 's|\.|\\\.|g;s|/|\\/|g'
+}
+
+error(){
+  ret=$1 && shift 1 && echo $* >&2 && exit $ret
+}
+
+# $1 = delay in sec
+clipboard_clear() {
+  if [ -n "$1" ]
+  then
+    for I in $(screen -ls | grep "$fname"_clipboard | awk '{print $1}')
+    do
+      screen -S "$I" -X stuff "^C"
+    done
+    screen -dmS "$fname"_clipboard sh -c "sleep $1 ; printf '' | xclip -selection clipboard ; sleep 1" # put empty string into clipboard
+  else
+    xclip -selection clipboard < /dev/null
+  fi
+}
+
+# $1 = prompt message
+prompt_password() {
+  if [ -n "$DISPLAY" ]
+  then
+    if which kdialog >/dev/null 2>&2
+    then kdialog --title "zpass" --password "$1" 2>/dev/null
+    else zenity --title "zpass" --password 2>/dev/null
+    fi
+  else
+    printf "%s:" "$1" >&2
+    stty -echo
+    read -r PASSWORD || return $?
+    stty echo
+    printf "\n" >&2
+    echo $PASSWORD
+  fi
+}
+
+# $1 = message
+error_dialog() {
+  if which kdialog >/dev/null 2>&2
+  then kdialog --title "zpass" --error "$1" 2>/dev/null
+  else zenity --title "zpass" --error --text="$1" 2>/dev/null
+  fi
+}
+
+new_key_with_confirm()
+{
+  [ -n "$ZPASS_KEY" ] && echo "$ZPASS_KEY" && return 0
+  pass1=1
+  pass2=2
+  while [ "$pass1" != "$pass2" ]
+  do
+    pass1=$(prompt_password "Enter new key") || error 100 "Cancelled"
+    pass2=$(prompt_password "Confirm key") || error 100 "Cancelled"
+    [ "$pass1" != "$pass2" ] && error_dialog "Passwords do not match.\nTry again"
+  done
+  echo "$pass1"
+}
+
+# $1 = prompt message
+get_key() {
+  message="Enter key"
+  [ -n "$1" ] && message="$1"
+  key=$(prompt_password "$message") || return $?
+  echo "$key"
+}
+
+copy()
+{
+  { keyed_remote g "$@" || return $? ; } | tr -d '\n' | xclip -selection clipboard && clipboard_clear "$ZPASS_CLIPBOARD_TIME"
+}
+
+[ -z "$1" ] && usage && return 1
+
+keyed_confirm_remote()
+{
+  new_key=$(new_key_with_confirm)
+  {
+    if ! remote ch
+    then
+      [ -z "$ZPASS_KEY" ] && { remote ch || ZPASS_KEY=$(get_key) ; }
+      echo "$ZPASS_KEY"
+    fi
+    echo "$new_key"
+    echo "$new_key"
+  } | remote "$@"
+}
+
+keyed_remote()
+{
+  [ -z "$ZPASS_KEY" ] && { remote ch || ZPASS_KEY=$(get_key) ; }
+  echo "$ZPASS_KEY" | remote "$@"
+}
+
+remote()
+{
+  if [ -n "$ZPASS_SSH_ID" ]
+  then
+    ssh "$ZPASS_REMOTE_ADDR" -i "$ZPASS_SSH_ID" -p "$ZPASS_REMOTE_PORT" $ZPASS_REMOTE_COMMAND "$@"
+  else
+    ssh "$ZPASS_REMOTE_ADDR" -p "$ZPASS_REMOTE_PORT" $ZPASS_REMOTE_COMMAND "$@"
+  fi
+}
+
+case $1 in
+  lsf|list-files)   remote "$@" ;;
+  rmf|rm-file)      remote "$@" ;;
+  cc|cache-clear)   remote "$@" ;;
+  ch|cached)        remote "$@" ;;
+  c|create)         keyed_confirm_remote "$@" ;;
+  l|ls|list)        keyed_remote "$@" ;;
+  t|tree)           keyed_remote "$@" ;;
+  g|get)            keyed_remote "$@" ;;
+  s|set)            keyed_remote "$@" ;;
+  n|new)            keyed_remote "$@" ;;
+  r|rm)             keyed_remote "$@" ;;
+  x|copy|clipboard) copy "$2" ;;
+  -h|h|help)        usage ;;
+  *)                [ -n "$ZPASS_UNK_OP_CALL" ] && "$0" $ZPASS_UNK_OP_CALL "$@" ;;
+esac

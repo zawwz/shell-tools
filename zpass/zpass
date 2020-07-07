@@ -18,6 +18,7 @@ usage()
   new <path> [length]   Generate a random password at target
   rm <path>             Delete the target
   rm-file               Remove the current file. Shortcut 'rmf'
+  cached                Returns wether or not a key is currently cached. Shortcut 'ch'
 
 [Config]:
  *Variable*              *Default value*                        *Description*
@@ -77,6 +78,8 @@ ZPASS_UNK_OP_CALL_T=$ZPASS_UNK_OP_CALL
 [ -z "$ZPASS_CLIPBOARD_TIME"  ] && ZPASS_CLIPBOARD_TIME=30 # in seconds
 [ -z "$ZPASS_UNK_OP_CALL"     ] && ZPASS_UNK_OP_CALL=copy
 
+[ -z "$TMPDIR" ] && TMPDIR=/tmp
+
 
 file="$datapath/$ZPASS_FILE$ZPASS_EXTENSION"
 
@@ -102,18 +105,18 @@ randpass() {
 }
 
 keyfile(){
-  printf "%s.key" "$(echo "$file" | md5sum | cut -d' ' -f1)"
+  printf "%s.key" "$(readlink -f "$file" | md5sum | cut -d' ' -f1)"
 }
 
 # $1 = delay in sec
 clipboard_clear() {
   if [ -n "$1" ]
   then
-    for I in $(screen -ls | grep "zpass_clipboard" | awk '{print $1}')
+    for I in $(screen -ls | grep "$fname"_clipboard | awk '{print $1}')
     do
       screen -S "$I" -X stuff "^C"
     done
-    screen -dmS "zpass_clipboard" sh -c "sleep $1 ; printf '' | xclip -selection clipboard ; sleep 1" # call zpass for autoclean
+    screen -dmS "$fname"_clipboard sh -c "sleep $1 ; printf '' | xclip -selection clipboard ; sleep 1" # put empty string into clipboard
   else
     xclip -selection clipboard < /dev/null
   fi
@@ -123,11 +126,11 @@ clipboard_clear() {
 delete_cache() {
   if [ "$1" -gt 0 ] 2>/dev/null
   then
-    for I in $(screen -ls | grep "zpass_$(keyfile)" | awk '{print $1}')
+    for I in $(screen -ls | grep "$fname"_"$(keyfile)" | awk '{print $1}')
     do
       screen -S "$I" -X stuff "^C"
     done
-    screen -dmS "zpass_$(keyfile)" sh -c "sleep $(($1*60)) ; $0" # call zpass for autoclean
+    screen -dmS "$fname"_"$(keyfile)" sh -c "sleep $(($1*60)) ; $0" # call zpass for autoclean
   else
     rm -f "$cachepath/$(keyfile)" 2>/dev/null
   fi
@@ -137,11 +140,11 @@ clean_cache() {
   # key cache
   find "$cachepath" -type f -mmin +"$ZPASS_KEY_CACHE_TIME" -exec rm '{}' ';'
   # tmp folders older than 1 min
-  rm -rd $(find /tmp -maxdepth 1 -type d -name "zpass_*" ! -mmin 1)
+  rm -rd $(find "$TMPDIR" -maxdepth 1 -type d -name "$fname"'_*' ! -mmin 1)
 }
 
 clear_cache() {
-  rm "$cachepath/*"
+  rm "$cachepath"/*
 }
 
 write_cache() {
@@ -150,6 +153,7 @@ write_cache() {
 }
 
 get_key_cached() {
+  [ ! -f "$file" ] && return 0
   cat "$cachepath/$(keyfile)" 2>/dev/null
 }
 
@@ -158,8 +162,8 @@ prompt_password() {
   if [ -n "$DISPLAY" ]
   then
     if which kdialog >/dev/null 2>&2
-    then kdialog --title "zpass" --password "$1" 2>/dev/null
-    else zenity --title "zpass" --password 2>/dev/null
+    then kdialog --title "$fname" --password "$1" 2>/dev/null
+    else zenity --title "$fname" --password 2>/dev/null
     fi
   else
     printf "%s:" "$1" >&2
@@ -174,8 +178,8 @@ prompt_password() {
 # $1 = message
 error_dialog() {
   if which kdialog >/dev/null 2>&2
-  then kdialog --title "zpass" --error "$1" 2>/dev/null
-  else zenity --title "zpass" --error --text="$1" 2>/dev/null
+  then kdialog --title "$fname" --error "$1" 2>/dev/null
+  else zenity --title "$fname" --error --text="$1" 2>/dev/null
   fi
 }
 
@@ -278,7 +282,7 @@ setval()
 {
   err=0
   # tmp files
-  tmpdir="/tmp/zpass_$(randalnum 5)"
+  tmpdir="$TMPDIR/$fname"_"$(randalnum 5)"
   keyfile="$tmpdir/$(randalnum 5).key"
   # operation
   (
@@ -294,7 +298,7 @@ setval()
 remove()
 {
   # tmp files
-  tmpdir="/tmp/zpass_$(randalnum 5)"
+  tmpdir="$TMPDIR/$fname"_"$(randalnum 5)"
   keyfile="$tmpdir/$(randalnum 5).key"
   # operation
   unpack "$tmpdir" "$keyfile" || return $?
@@ -306,7 +310,7 @@ remove()
 create() {
   if [ -f "$file" ]
   then
-    tmpdir="/tmp/zpass_$(randalnum 5)"
+    tmpdir="$TMPDIR/$fname"_"$(randalnum 5)"
     # pack n repack with no tmp key: create new
     unpack "$tmpdir" || return $?
     pack "$tmpdir" || { echo "Encryption error" >&2 && return 1 ; }
@@ -344,7 +348,7 @@ tree()
 
 get(){
   err=0
-  tmpdir="/tmp/zpass_$(randalnum 5)" && mkdir -p "$tmpdir"
+  tmpdir="$TMPDIR/$fname"_"$(randalnum 5)" && mkdir -p "$tmpdir"
   decrypt | tar -C "$tmpdir" -xf - || err=$?
 
   [ "$err" -eq 0 ] && { (
@@ -378,6 +382,7 @@ case $1 in
   n|new)            setval "$2" "$(randpass $3)" ;;
   r|rm)             remove "$2" "$3" ;;
   x|copy|clipboard) copy "$2" ;;
+  ch|cached)        get_key_cached >/dev/null 2>&1 ; exit $? ;;
   -h|h|help)        usage ;;
   *)                [ -n "$ZPASS_UNK_OP_CALL" ] && "$0" $ZPASS_UNK_OP_CALL "$@" ;;
 esac
