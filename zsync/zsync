@@ -102,11 +102,12 @@ get_deleted()
 }
 
 # init
-init_local(){
+init_local() {
   mkdir -p "$syncdir" || exit $?              # create syncdir
 }
 init_server() {
-  ssh $raddr "mkdir -p '$rdir/$syncdir'"
+  ssh $raddr "mkdir -p '$rdir/$syncdir'" || return $?
+  ssh $raddr "which rsync >/dev/null 2>&1" || { echo "rsync not found on server" >&2 && return 1; }
 }
 
 # read file list from stdin
@@ -118,7 +119,7 @@ send() {
     sed 's|\./||g'
   else
     printf '* '
-    rsync $rsync_opts --files-from=- --exclude=".zsync" -e ssh "$(pwd)" "$raddr:$rdir"
+    rsync $rsync_opts --files-from=- --exclude=".zsync" -e ssh "$(pwd)" "$raddr:$rdir" || return $?
   fi
 }
 
@@ -130,7 +131,7 @@ recieve() {
     sed 's|\./||g'
   else
     printf '* '
-    rsync $rsync_opts --files-from=- -e ssh "$raddr:$rdir" "$(pwd)"
+    rsync $rsync_opts --files-from=- -e ssh "$raddr:$rdir" "$(pwd)" || return $?
   fi
 }
 
@@ -144,11 +145,13 @@ delete_server() {
   else
     echo "* sending deleted"
     ssh $raddr "cd '$rdir' || exit 1
+    trashutil='gio trash'
+    which trash-put >/dev/null 2>&1 && trashutil=trash-put
     while read -r ln
     do
-      gio trash \"\$ln\" && echo \"\$ln\"
+      \$trashutil \"\$ln\" && echo \"\$ln\" || exit \$?
     done
-    "
+    " || return $?
   fi
 }
 # read delete from stdin
@@ -159,9 +162,11 @@ delete_local() {
     sed 's|\./||g'
   else
     echo "* recieving deleted"
+    trashutil='gio trash'
+    which trash-put >/dev/null 2>&1 && trashutil=trash-put
     while read -r ln
     do
-      gio trash "$ln" && echo "$ln"
+      $trashutil "$ln" && echo "$ln" || return $?
     done
   fi
 }
@@ -181,14 +186,14 @@ setup_server()
 
 forcepull()
 {
-  rsync $rsync_opts -r --delete -e ssh "$raddr:$rdir" "$(pwd)/."
+  rsync $rsync_opts -r --delete -e ssh "$raddr:$rdir" "$(pwd)/." || return $?
   sleep 1
   set_timestamp_local
 }
 
 forcepush()
 {
-  rsync $rsync_opts -r --delete -e ssh "$(pwd)/." "$raddr:$rdir"
+  rsync $rsync_opts -r --delete -e ssh "$(pwd)/." "$raddr:$rdir" || return $?
   sleep 1
   set_timestamp_local
 }
