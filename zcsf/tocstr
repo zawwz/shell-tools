@@ -1,9 +1,6 @@
 #!/bin/sh
 
-COMMENTSCRIPT="/^\s*#/d;s/\s*#[^\"']*$//"
-SLASHSCRIPT='s|\\|\\\\|g;s|\"|\\\"|g'
-
-SEDSCRIPT="$COMMENTSCRIPT;$SLASHSCRIPT"
+SEDSCRIPT='s|\\|\\\\|g;s|\"|\\\"|g'
 NEWLINE_SCRIPT=':a;N;$!ba;s/\n/\\n/g;'
 
 usage ()
