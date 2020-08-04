@@ -87,10 +87,12 @@ if [ -n "$opt_d" ]
 then
   ## DAEMON
   # reset status of all clicks
+  which bc >/dev/null || { echo "bc not installed" >&2 && exit 1; }
+  which xdotool >/dev/null || { echo "xdotool not installed" >&2 && exit 1; }
   stime=$(echo "scale=2;$block_time/1000.0" | bc)
   for I in "$FOLDER"/*
   do
-    echo "0" > "$I"
+    echo "0" > "$I" 2>/dev/null
   done
   # DAEMON
   while true
