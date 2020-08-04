@@ -8,8 +8,8 @@ lock_file="$TMPDIR/sysupdate.lock"
 
 get_running_programs()
 {
-  echo "$1" | tr '-' '_' | grep -qwE "$(echo "$linuxpkgnames" | tr '-' '_')"  && echo linux
-  for I in $1
+  echo "$*" | tr '-' '_' | grep -qwE "$(echo "$linuxpkgnames" | tr '-' '_')"  && echo linux
+  for I in $*
   do
     pgrep -xi "$I" >/dev/null && echo $I
   done
@@ -23,24 +23,25 @@ stop()
 
 fetch_error()
 {
-  echo "Error: Could not fetch packages" > /dev/stderr
+  echo "Error: Could not fetch packages" >&2
   znotif -T "System updates" -t 120 -m "Error during system updates: could not fetch packages"
   stop 3
 }
 
 update_error()
 {
-  echo "Error: Could not upgrade system" > /dev/stderr
+  echo "Error: Could not upgrade system" >&2
   znotif -T "System updates" -t 120 -m "Error during system updates: could not upgrade"
   stop 3
 }
 
-which zupdate >/dev/null || { echo "zupdate not installed" >&2; exit 4; }
+which zupdate >/dev/null 2>&1 || { echo "zupdate not installed" >&2; exit 4; }
+which znotif >/dev/null 2>&1 || { echo "znotif not installed" >&2; exit 4; }
 
 # Check if another process is running
 if [ -n "$(pgrep zupdate)" ] || [ -f "$lock_file" ]
 then
-  echo "Updates are already running" > /dev/stderr
+  echo "Updates are already running" >&2
   exit 1
 fi
 touch "$lock_file"
@@ -48,12 +49,12 @@ touch "$lock_file"
 # package manager specific variables
 if which apt >/dev/null 2>&1
 then
-  linuxpkgnames="linux-image-*"
+  linuxpkgnames="linux-image-.*"
 elif which pacman > /dev/null 2>&1
 then
   linuxpkgnames="linux|linux-hardened|linux-lts|linux-zen|linux-mainline|linux-rt|linux-git|linux-next"
 else
-  echo "Unsupported package manager" > /dev/stderr
+  echo "Unsupported package manager" >&2
   stop 2
 fi
 
@@ -75,8 +76,8 @@ if [ -n "$running_programs" ]
 then
   if ! znotif -T "System Updates" -y -m "The following running programs have recieved updates: \n$(echo "$running_programs" | sed 's|^|  -  |g')\nProceed?"
   then
-    echo "Update cancelled" > /dev/stderr
-    stop 3
+    echo "Update cancelled" >&2
+    stop 5
   fi
 fi
 
