@@ -5,8 +5,27 @@ usage()
 {
   echo "$fname <file>
 Compile the target shell script into a single output
-Resolves '%include' lines with shell capacity"
+
+Functionality:
+- resolve '%include' lines with shell capacity
+- minimize code (shfmt required)
+
+Options:
+  -I    Don't resolve includes
+  -M    Don't minimize code"
 }
+
+unset opt_m opt_I
+while getopts ":hIM" opt;
+do
+  case $opt in
+    h) usage && exit 1 ;;
+    I) opt_I=y ;;
+    M) opt_M=y ;;
+    esac
+done
+
+shift $((OPTIND-1))
 
 # no arg
 unset infile
@@ -21,7 +40,7 @@ fi
 [ -z "$TMPDIR" ] && TMPDIR=/tmp
 tmpdir="$TMPDIR/shcompile_$(tr -dc '[:alnum:]' < /dev/urandom | head -c10)"
 mkdir -p "$tmpdir"
-tmpfile="$tmpdir/ret"
+retfile="$tmpdir/ret"
 filelist="$tmpdir/list"
 headfile="$tmpdir/head"
 tailfile="$tmpdir/tail"
@@ -32,12 +51,22 @@ stop()
   exit $1
 }
 
+warn()
+{
+  printf "\033[33m%s\033[0m\n" "$*"
+}
+
+get_include_line()
+{
+  [ -z "$opt_I" ] && grep -m1 -n '^%include ' "$1" | cut -d':' -f1
+}
+
 [ -z "$infile" ] && infile=$1
 dirname=$()
 [ "$infile" = '-' ] && infile=/dev/stdin
 
 # create copy
-cat "$infile" > "$tmpfile" 2>&1 || { echo "Error: cannot read '$infile'" >&2 && stop 2; }
+cat "$infile" > "$retfile" 2>&1 || { echo "Error: cannot read '$infile'" >&2 && stop 2; }
 
 # env when file
 [ "$infile" != "/dev/stdin" ] && {
@@ -45,41 +74,47 @@ cat "$infile" > "$tmpfile" 2>&1 || { echo "Error: cannot read '$infile'" >&2 && 
   cd "$(dirname "$infile")"
 }
 
-firstline=$(head -n1 "$tmpfile" | grep '^#!/')
+firstline=$(head -n1 "$retfile" | grep '^#!/')
 
-[ -z "$firstline" ] && firstline='#!/bin/sh'
+if [ -n "$firstline" ]
+then
+  sed -i 1d "$retfile"
+else
+  firstline='#!/bin/sh'
+fi
 
-get_include_line()
-{
-  grep -m1 -n '^%include ' "$1" | cut -d':' -f1
-}
-
-n=$(get_include_line "$tmpfile")
+n=$(get_include_line "$retfile")
 while [ -n "$n" ]
 do
-  pre=$(head -n $((n-1)) "$tmpfile" > "$headfile")
-  post=$(tail -n +$((n+1)) "$tmpfile" > "$tailfile")
-  incarg=$(sed "$n""q;d" "$tmpfile" | cut -d ' ' -f2-)
+  pre=$(head -n $((n-1)) "$retfile" > "$headfile")
+  post=$(tail -n +$((n+1)) "$retfile" > "$tailfile")
+  incarg=$(sed "$n""q;d" "$retfile" | cut -d ' ' -f2-)
   inc=$(echo "for I in $incarg ; do echo \$I ; done" | sh)
 
-  cp "$headfile" "$tmpfile"
+  cp "$headfile" "$retfile"
   echo "$inc" | while read -r file
   do
     cat "$file" >/dev/null 2>&1 || { echo "Error when trying to include '$incarg': '$file' could not be read" >&2 && stop 10; }
     if ! grep -q "^$(readlink -f "$file")\$" "$filelist"
     then # not already included
-      cat "$file" >> "$tmpfile"
+      cat "$file" >> "$retfile"
       echo "$(readlink -f "$file")" >> "$filelist"
     fi
     cd "$pwd"
   done
-  cat "$tailfile" >> "$tmpfile"
+  cat "$tailfile" >> "$retfile"
   # get next include line
-  n=$(get_include_line "$tmpfile")
+  n=$(get_include_line "$retfile")
 done
 
-which shfmt >/dev/null 2>&1 && shfmt -w -mn "$tmpfile"
+if [ -z "$opt_M" ]
+then
+  if which shfmt >/dev/null 2>&1
+  then shfmt -w -mn "$retfile"
+  else warn "warn: sfmt not installed, code cannot be minimized"
+  fi
+fi
 echo "$firstline"
-cat "$tmpfile"
+cat "$retfile"
 
 stop 0
