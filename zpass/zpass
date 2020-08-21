@@ -19,6 +19,7 @@ usage()
   rm <path>             Delete the target
   rm-file               Remove the current file. Shortcut 'rmf'
   cached                Returns wether or not a key is currently cached. Shortcut 'ch'
+  rm-cache              Delete the cached key for this file. Shortcut 'rmc'
 
 [Config]:
  *Variable*              *Default value*                        *Description*
@@ -28,9 +29,12 @@ usage()
   ZPASS_CACHE_PATH        '\$XDG_CACHE_HOME/zpass'                Path used for caching keys
   ZPASS_FILE              'default'                              File to use for operations
   ZPASS_KEY                                                      Key to use for encrypting/decrypting files
-  ZPASS_KEY_CACHE_TIME    '1'                                    Time a key stays in cache for decrypting, in minutes
+  ZPASS_KEY_CACHE_TIME    '60'                                   Time a key stays in cache for decrypting, in seconds
   ZPASS_CLIPBOARD_TIME    '30'                                   Time until clipboard gets cleared after copy, in seconds
   ZPASS_UNK_OP_CALL       'copy'                                 Operation to call on unrecognized first argument
+  ZPASS_REMOTE_ADDR                                              SSH server the file is on
+  ZPASS_REMOTE_PORT       '22'                                   SSH server port
+  ZPASS_SSH_ID                                                   SSH private key to use
 
 All operations can be shortened to their first char unless specified
 Unknown first argument will perform the operation described in 'ZPASS_UNK_OP_CALL' on that argument
@@ -38,34 +42,30 @@ Unknown first argument will perform the operation described in 'ZPASS_UNK_OP_CAL
 }
 
 # XDG config
-datapath="$HOME/.local/share/zpass"
-cachepath="$HOME/.cache/zpass"
-configpath="$HOME/.config/zpass"
+datapath="~/.local/share/zpass"
+cachepath="~/.cache/zpass"
+configpath="~/.config/zpass"
 [ -n "$XDG_DATA_HOME" ] && datapath="$XDG_DATA_HOME/zpass"
 [ -n "$XDG_CONFIG_HOME" ] && configpath="$XDG_CONFIG_HOME/zpass"
 [ -n "$XDG_CACHE_HOME" ] && cachepath="$XDG_CACHE_HOME/zpass"
 [ -z "$CONFIGFILE" ] && CONFIGFILE="$configpath/default.conf"
 
+
+randalnum() {
+  tr -cd '[a-zA-Z]' < /dev/urandom | head -c $1
+}
+
+[ -z "$TMPDIR" ] && TMPDIR=/tmp
+
 # stash env config
-ZPASS_PATH_T=$ZPASS_PATH
-ZPASS_CACHE_PATH_T=$ZPASS_CACHE_PATH
-ZPASS_FILE_T=$ZPASS_FILE
-ZPASS_EXTENSION_T=$ZPASS_EXTENSION
-ZPASS_KEY_CACHE_TIME_T=$ZPASS_KEY_CACHE_TIME
-ZPASS_CLIPBOARD_TIME_T=$ZPASS_CLIPBOARD_TIME
-ZPASS_UNK_OP_CALL_T=$ZPASS_UNK_OP_CALL
+tmpenv="$TMPDIR/zpassenv_$(randalnum 5)"
+env | grep '^ZPASS_.*=' | sed "s/'/'\\\''/g;s/=/='/;s/$/'/g" > "$tmpenv"
 
 # load config file
 [ -f "$CONFIGFILE" ] && { . "$CONFIGFILE" || exit $? ; }
 
-# insert env config
-[ -n "$ZPASS_PATH_T"            ] && ZPASS_PATH=$ZPASS_PATH_T
-[ -n "$ZPASS_CACHE_PATH_T"      ] && ZPASS_CACHE_PATH=$ZPASS_CACHE_PATH_T
-[ -n "$ZPASS_FILE_T"            ] && ZPASS_FILE=$ZPASS_FILE_T
-[ -n "$ZPASS_EXTENSION_T"       ] && ZPASS_EXTENSION=$ZPASS_EXTENSION_T
-[ -n "$ZPASS_KEY_CACHE_TIME_T"  ] && ZPASS_KEY_CACHE_TIME=$ZPASS_KEY_CACHE_TIME_T
-[ -n "$ZPASS_CLIPBOARD_TIME_T"  ] && ZPASS_CLIPBOARD_TIME=$ZPASS_CLIPBOARD_TIME_T
-[ -n "$ZPASS_UNK_OP_CALL_T"     ] && ZPASS_UNK_OP_CALL=$ZPASS_UNK_OP_CALL_T
+. "$tmpenv" || exit $?
+rm -f "$tmpenv" 2>/dev/null
 
 # resolve zpass_path
 [ -n "$ZPASS_PATH"        ] && datapath="$ZPASS_PATH"
@@ -74,14 +74,15 @@ ZPASS_UNK_OP_CALL_T=$ZPASS_UNK_OP_CALL
 # default ZPASS config
 [ -z "$ZPASS_FILE"            ] && ZPASS_FILE=default
 [ -z "$ZPASS_EXTENSION"       ] && ZPASS_EXTENSION=.tar.gpg
-[ -z "$ZPASS_KEY_CACHE_TIME"  ] && ZPASS_KEY_CACHE_TIME=1 # in minutes
+[ -z "$ZPASS_KEY_CACHE_TIME"  ] && ZPASS_KEY_CACHE_TIME=60 # in seconds
 [ -z "$ZPASS_CLIPBOARD_TIME"  ] && ZPASS_CLIPBOARD_TIME=30 # in seconds
 [ -z "$ZPASS_UNK_OP_CALL"     ] && ZPASS_UNK_OP_CALL=copy
 
-[ -z "$TMPDIR" ] && TMPDIR=/tmp
-
-
 file="$datapath/$ZPASS_FILE$ZPASS_EXTENSION"
+
+error(){
+  ret=$1 && shift 1 && echo $* >&2 && exit $ret
+}
 
 mkdir -p "$datapath" 2>/dev/null || error 1 "Could not create '$datapath'"
 mkdir -p "$cachepath" 2>/dev/null && chmod -R go-rwx "$cachepath" 2>/dev/null
@@ -90,22 +91,27 @@ escape_chars() {
   echo "$*" | sed 's|\.|\\\.|g;s|/|\\/|g'
 }
 
-error(){
-  ret=$1 && shift 1 && echo $* >&2 && exit $ret
-}
-
-randalnum() {
-  tr -cd '[a-zA-Z]' < /dev/urandom | head -c $1
-}
-
 randpass() {
   len=$1
   [ -z "$len" ] && len=20
   tr -cd 'a-zA-Z0-9!-.' < /dev/urandom | head -c $len
 }
 
+# $1 = file
+getpath() {
+  if [ -n "$REMOTE_ADDR" ]
+  then echo "$REMOTE_PORT:$REMOTE_ADDR:$file"
+  else readlink -f "$file"
+  fi
+}
+
+# $1 = file
+filehash(){
+  getpath "$file" | md5sum | cut -d' ' -f1
+}
+
 keyfile(){
-  printf "%s.key" "$(readlink -f "$file" | md5sum | cut -d' ' -f1)"
+  printf "%s.key" "$(filehash)"
 }
 
 # $1 = delay in sec
@@ -116,13 +122,13 @@ clipboard_clear() {
     do
       screen -S "$I" -X stuff "^C"
     done
-    screen -dmS "$fname"_clipboard sh -c "sleep $1 ; printf '' | xclip -selection clipboard ; sleep 1" # put empty string into clipboard
+    screen -dmS "$fname"_clipboard sh -c "sleep $1 ; xclip -selection clipboard < /dev/null ; sleep 1" # put empty string into clipboard
   else
     xclip -selection clipboard < /dev/null
   fi
 }
 
-# $1 = delay in min
+# $1 = delay in sec
 delete_cache() {
   if [ "$1" -gt 0 ] 2>/dev/null
   then
@@ -130,7 +136,7 @@ delete_cache() {
     do
       screen -S "$I" -X stuff "^C"
     done
-    screen -dmS "$fname"_"$(keyfile)" sh -c "sleep $(($1*60)) ; $0" # call zpass for autoclean
+    screen -dmS "$fname"_"$(keyfile)" sh -c "sleep $1 ; $0 rmc" # call zpass with cache delete
   else
     rm -f "$cachepath/$(keyfile)" 2>/dev/null
   fi
@@ -138,7 +144,7 @@ delete_cache() {
 
 clean_cache() {
   # key cache
-  find "$cachepath" -type f -mmin +"$ZPASS_KEY_CACHE_TIME" -exec rm '{}' ';'
+  find "$cachepath" -type f ! -newermt @$(date -d "-$ZPASS_KEY_CACHE_TIME seconds" +%s) -print0 | xargs -0 rm
   # tmp folders older than 1 min
   rm -rd $(find "$TMPDIR" -maxdepth 1 -type d -name "$fname"'_*' ! -mmin 1)
 }
@@ -214,9 +220,19 @@ decrypt_with_key()
   return $ret
 }
 
+unset REQ_CLEAN
 # $1 = keyfile to write
 decrypt()
 {
+  [ -n "$ZPASS_REMOTE_ADDR" ] && {
+    file="$TMPDIR/zpass_$(filehash)$ZPASS_EXTENSION"
+    [ -z "$ZPASS_PATH" ] && datapath="~/.local/share/zpass"
+    if [ -n "$ZPASS_SSH_ID" ]
+    then scp -i "$ZPASS_SSH_ID" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" "$file" >/dev/null || return $?
+    else scp "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" "$file" >/dev/null || return $?
+    fi
+    ## TODO ##
+  }
   [ ! -f "$file" ] && return 1 # no file
 
   if [ -n "$ZPASS_KEY" ]
@@ -240,7 +256,11 @@ decrypt()
       done
     fi
   fi
-  [ $ret -ne 0 ] && { echo "Could not decrypt '$file'" >&2 && return $ret ; }
+
+  [ -n "$ZPASS_REMOTE_ADDR" ] && rm -rf "$file" 2>/dev/null
+
+  [ $ret -ne 0 ] && { echo "Could not decrypt '$file'" >&2 ; }
+  return $ret
 }
 
 # $1 = key
@@ -274,7 +294,18 @@ pack()
     fi
     tar -cf - * | encrypt "$key" > "$1/$archive" || return $?
   ) || return $?
-  mv -f "$1/$archive" "$file"
+  if [ -n "$ZPASS_REMOTE_ADDR" ]
+  then
+    [ -z "$ZPASS_PATH" ] && datapath="~/.local/share/zpass"
+    if [ -n "$ZPASS_SSH_ID" ]
+    then scp -i "$ZPASS_SSH_ID" "$1/$archive" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" >/dev/null || return $?
+    else scp "$1/$archive" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" >/dev/null || return $?
+    fi
+    rm -f "$1/$archive" 2>/dev/null
+    return 0
+  else
+    mv -f "$1/$archive" "$file"
+  fi
 }
 
 # $1 = file , $2 = content
@@ -316,14 +347,29 @@ create() {
     pack "$tmpdir" || { echo "Encryption error" >&2 && return 1 ; }
     rm -rf "$tmpdir"
   else
+    # if remote: file tmp
+    [ -n "$ZPASS_REMOTE_ADDR" ] && {
+      file="$TMPDIR/zpass_$(filehash)$ZPASS_EXTENSION"
+      [ -z "$ZPASS_PATH" ] && datapath="~/.local/share/zpass"
+    }
+    # get key
     [ -z "$ZPASS_KEY" ] && ZPASS_KEY=$(new_key_with_confirm) || { echo "Cancelled" >&2 && return 100 ; }
+    # create archive
     tar -cf - -T /dev/null | encrypt "$ZPASS_KEY" > "$file" || {
       echo "Encryption error" >&2
       # echo "$tmperr" >&2
       rm "$file"
       return 1
     }
+    [ -n "$ZPASS_REMOTE_ADDR" ] && {
+      if [ -n "$ZPASS_SSH_ID" ]
+      then scp -i "$ZPASS_SSH_ID" "$file" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" >/dev/null || return $?
+      else scp "$file" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" >/dev/null || return $?
+      fi
+      rm -rf "$file" 2>/dev/null
+    }
   fi
+  return 0
 }
 
 list()
@@ -382,7 +428,12 @@ case $1 in
   n|new)            setval "$2" "$(randpass $3)" ;;
   r|rm)             remove "$2" "$3" ;;
   x|copy|clipboard) copy "$2" ;;
-  ch|cached)        get_key_cached >/dev/null 2>&1 ; exit $? ;;
+  ch|cached)        get_key_cached >/dev/null 2>&1 ;;
+  rmc|rm-cache)     delete_cache 0 >/dev/null 2>&1 ;;
   -h|h|help)        usage ;;
   *)                [ -n "$ZPASS_UNK_OP_CALL" ] && "$0" $ZPASS_UNK_OP_CALL "$@" ;;
 esac
+
+# ret=$?
+# [ -n "$REQ_CLEAN" ] && rm -rf "$REQ_CLEAN" 2>/dev/null
+# return $ret
