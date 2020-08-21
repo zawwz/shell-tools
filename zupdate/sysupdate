@@ -60,9 +60,9 @@ fi
 
 #fetch updates
 
-size=$(zupdate -Mkd) || fetch_error
-
-packages=$(zupdate -L | cut -d' ' -f1) || fetch_error
+all=$(zupdate -MkdL) || fetch_error
+size=$(echo "$all" | head -n1)
+packages=$(echo "$all" | cut -d' ' -f1 | tail -n+2)
 
 if [ -z "$packages" ]
 then
