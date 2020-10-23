@@ -32,7 +32,7 @@ shift $((OPTIND-1))
 targets="."
 [ $# -gt 0 ] && targets="$*"
 
-ret=$(find $targets -printf '%T@\n' | sort | tail -n1 | cut -d'.' -f1)
+ret=$(find $targets -printf '%T@\n' | sort -n | tail -n1 | cut -d'.' -f1)
 
 if [ -z "$_opt_s" ]
 then
