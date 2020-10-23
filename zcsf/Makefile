@@ -1,24 +1,36 @@
+## CONFIG ##
+
 IDIR=include
 SRCDIR=src
 ODIR=obj
 BINDIR=.
 
-NAME = hello
+# binary name, default name of dir
+NAME = $(shell readlink -f . | xargs basename)
 
+# global links
 LDFLAGS =
 
+# compiler
 CC=gcc
+# compiler flags
 CXXFLAGS= -I$(IDIR) -Wall -pedantic -std=c18
 ifeq	 ($(DEBUG),true)
+	# debugging flags
 	CXXFLAGS += -g
 else
+	# release flags
 	CXXFLAGS += -O2
 endif
 ifeq	($(STATIC),true)
+	# static links
 	LDFLAGS +=
 else
+	# dynamic links
 	LDFLAGS +=
 endif
+
+## END CONFIG ##
 
 $(shell mkdir -p $(ODIR))
 $(shell mkdir -p $(BINDIR))
@@ -26,12 +38,12 @@ $(shell mkdir -p $(BINDIR))
 # automatically finds .h
 DEPS = $(shell find $(IDIR) -type f -regex '.*\.h')
 # automatically finds .c and makes the corresponding .o rule
-OBJ = $(shell find $(SRCDIR) -type f -regex '.*\.c' | sed 's|\.c|.o|g;s|$(SRCDIR)/|$(ODIR)/|g')
+OBJ = $(shell find $(SRCDIR) -type f -regex '.*\.c' | sed 's|\.c|.o|g;s|^$(SRCDIR)/|$(ODIR)/|g')
 
 $(ODIR)/%.o: $(SRCDIR)/%.c $(DEPS)
 	$(CC) $(CXXFLAGS) -c -o $@ $<
 
-$(BINDIR)/$(NAME): $(OBJ) $(DEPS)
+$(BINDIR)/$(NAME): $(OBJ)
 	$(CC) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 test: $(BINDIR)/$(NAME)

@@ -21,18 +21,18 @@ Operations:
 Operation "src" can be abbrieviated to "s"'
 }
 
-if [ -n "$XDG_CONFIG_HOME" ]
+if [ -n "$XDG_DATA_HOME" ]
 then
-  local_configpath="$XDG_CONFIG_HOME/zcsf"
+  local_datapath="$XDG_DATA_HOME/zcsf"
 else
-  local_configpath="$HOME/.config/zcsf"
+  local_datapath="$HOME/.local/share/zcsf"
 fi
 
-usr_configpath="/usr/share/zcsf"
+usr_datapath="/usr/share/zcsf"
 
 if [ -n "$CONFIGPATH" ]
 then
-  local_configpath="$CONFIGPATH"
+  local_datapath="$CONFIGPATH"
 fi
 
 header_ifndef()
@@ -162,20 +162,20 @@ dir_gen()
 
 gen_make()
 {
-  if [ -f "$local_configpath/Makefile$1" ] ; then
-    mpath="$local_configpath/Makefile$1"
+  if [ -f "$local_datapath/Makefile$1" ] ; then
+    mpath="$local_datapath/Makefile$1"
   else
-    mpath="$usr_configpath/Makefile$1"
+    mpath="$usr_datapath/Makefile$1"
   fi
   cp "$mpath" Makefile 2>/dev/null || touch Makefile
 }
 
 gen_main()
 {
-  if [ -f "$local_configpath/main.c$1" ] ; then
-    mpath="$local_configpath/main.c$1"
+  if [ -f "$local_datapath/main.c$1" ] ; then
+    mpath="$local_datapath/main.c$1"
   else
-    mpath="$usr_configpath/main.c$1"
+    mpath="$usr_datapath/main.c$1"
   fi
   cp "$mpath" "$SRCDIR" 2>/dev/null || touch "$SRCDIR/main.c$1"
 }

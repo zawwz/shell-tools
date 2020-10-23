@@ -1,32 +1,46 @@
+## CONFIG ##
+
 IDIR=include
 SRCDIR=src
 ODIR=obj
 BINDIR=.
 
-NAME = hello
+# binary name, default name of dir
+NAME = $(shell readlink -f . | xargs basename)
 
+# global links
 LDFLAGS =
 
+# compiler
 CC=g++
+# compiler flags
 CXXFLAGS= -I$(IDIR) -Wall -pedantic -std=c++17
-ifeq	 ($(DEBUG),true)
+ifeq     ($(DEBUG),true)
+	# debugging flags
 	CXXFLAGS += -g
 else
+	# release flags
 	CXXFLAGS += -O2
 endif
-ifeq	($(STATIC),true)
+ifeq    ($(STATIC),true)
+	# static links
 	LDFLAGS +=
 else
+	# dynamic links
 	LDFLAGS +=
 endif
+
+## END CONFIG ##
+
+
 
 $(shell mkdir -p $(ODIR))
 $(shell mkdir -p $(BINDIR))
 
-# automatically finds .h and .hpp
+# automatically find .h and .hpp
 DEPS = $(shell find $(IDIR) -type f -regex '.*\.hp?p?')
-# automatically finds .c and .cpp and makes the corresponding .o rule
-OBJ = $(shell find $(SRCDIR) -type f -regex '.*\.cp?p?' | sed 's|\.cpp|.o|g;s|\.c|.o|g;s|$(SRCDIR)/|$(ODIR)/|g')
+# automatically find .c and .cpp and make the corresponding .o rule
+OBJ = $(shell find $(SRCDIR) -type f -regex '.*\.cp?p?' | sed 's|\.cpp|.o|g;s|\.c|.o|g;s|^$(SRCDIR)/|$(ODIR)/|g')
 
 $(ODIR)/%.o: $(SRCDIR)/%.c $(DEPS)
 	$(CC) $(CXXFLAGS) -c -o $@ $<
@@ -34,7 +48,7 @@ $(ODIR)/%.o: $(SRCDIR)/%.c $(DEPS)
 $(ODIR)/%.o: $(SRCDIR)/%.cpp $(DEPS)
 	$(CC) $(CXXFLAGS) -c -o $@ $<
 
-$(BINDIR)/$(NAME): $(OBJ) $(DEPS)
+$(BINDIR)/$(NAME): $(OBJ)
 	$(CC) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 test: $(BINDIR)/$(NAME)
