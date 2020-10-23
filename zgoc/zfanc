@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # config file
 config_path="/etc/zgoc"
@@ -70,9 +70,9 @@ _stop() {
   exit $1
 }
 
-if [[ $(lspci | grep -c VGA) -gt 1 ]]
+if [ $(lspci | grep -c VGA) -gt 1 ]
 then
-  if [[ -z "$GPU_NAME" ]] && [[ -z "$GPU_PCI_ID" ]] ; then
+  if [ -z "$GPU_NAME" ] && [ -z "$GPU_PCI_ID" ] ; then
     error "Several GPUs are present and no GPU is specified"
     exit 20
   fi
@@ -100,7 +100,7 @@ echo -n "Device at "
 pwd
 cd "device/hwmon/$(ls device/hwmon)" || exit
 
-if [ $UID -ne 0 ]
+if [ $(id -u) -ne 0 ]
 then
   echo "Root privileges required"
   exit 10
@@ -112,7 +112,7 @@ then
   exit 11
 fi
 
-trap '_stop' SIGINT
+trap '_stop 1' INT
 
 file_write 1 pwm1_enable
 
