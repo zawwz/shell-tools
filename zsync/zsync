@@ -5,12 +5,15 @@
 
 # globals
 syncdir=".zsync"
-timestamp_file=".zsync/timestamp"
 lock_file=".zsync/lock"
-tree_file=".zsync/tree"
-server_file=".zsync/server"
+ignore_file=".zsync/ignore"
+tree_full=".zsync/tree_full"
+tree_hash=".zsync/tree_hash"
+config_file=".zsync/config"
 
 rsync_opts='-rvlpE'
+
+TMPDIR=${TMPDIR-/tmp}
 
 # usage
 fname=$(basename "$0")
@@ -30,23 +33,59 @@ Operations:
   forcepull           Pull by force the entire tree. Will replace and delete local files"
 }
 
-# generic tools
+## generic tools
 
-# read list from stdin
-reduce_list()
+# $@ = paths
+check_paths()
 {
-  list="$(cat /dev/stdin)"
-  I=1
-  while true
+  for N
   do
-    ln=$(echo "$list" | sed -n "$I"p) # get nth line
-    [ -z "$ln" ] && break
-    list=$(echo "$list" | grep -v "^$ln/")
-    I=$((I+1))
+    echo "$N" | grep "^/" && echo "Path cannot start with /" >&2 && return 1
+    echo "$N" | grep -w ".." && echo "Path cannot contain .." >&2 && return 1
   done
-  echo "$list"
+  return 0
 }
 
+tmpdir() {
+  echo "$TMPDIR/zsync_$(tr -dc '[:alnum:]' </dev/urandom | head -c20)"
+}
+
+## CONFIG
+
+init_config() {
+  mkdir -p "$syncdir" || return 2
+  which rsync >/dev/null 2>&1 || { echo rsync not installed on server >&2 ; return 3; }
+  touch "$config_file" || return 5
+}
+
+get_server() {
+  [ ! -f "$config_file" ] && return 1
+  servconf=$(sed 's|^[ \t]*||g' "$config_file" | grep -E '^server[ \t]' | sed 's|^server[ \t]*||g' | tail -n1)
+  raddr=$(echo "$servconf" | cut -d ':' -f1)
+  rdir=$(echo "$servconf" | cut -d ':' -f2-)
+}
+
+# $1 = server arg
+setup_server()
+{
+  init_config || return $?
+  [ -z "$1" ] && echo "$fname server user@host:path" && return 1
+  sed -i '/^[ \t]*server[ \t]/d' "$config_file"
+  echo "server $1" >> "$config_file"
+}
+
+ignores=""
+get_ignores() {
+  if [ -f "$ignore_file" ]
+  then
+    ignores="($(tr '\n' '|' < "$ignore_file"))"
+  else
+    ignores='(^$)'
+  fi
+  ignores=$(echo "$ignores" | sed ' s/|)/)/g ; s/^()$/^$/g ')
+}
+
+## LOCK
 
 lock_local() { touch "$lock_file"; }
 unlock_local() { rm "$lock_file"; }
@@ -62,124 +101,157 @@ server_lock_check() {
   ssh "$raddr" "cd '$rdir' && [ ! -f '$lock_file' ]" || { echo "Server is busy, wait for sync completion" >&2 && return 1; }
 }
 
-set_timestamp_local() { date +%s > "$timestamp_file" ; }
+# init
+init_local() {
+  mkdir -p "$syncdir" || return 2
+  which rsync >/dev/null 2>&1 || { echo rsync not installed on server >&2 ; return 3; }
+  local_lock_check || return 4
+  touch "$lock_file" || return 5
+}
 
+init_server() {
+  ssh "$raddr" "
+    cd '$rdir' || exit 1
+    mkdir -p '$syncdir' || exit 2
+    which rsync >/dev/null 2>&1 || { echo rsync not installed on server >&2 ; exit 3; }
+    [ -f '$lock_file' ] && { echo Server is busy, wait for sync completion ; exit 4; }
+    touch '$lock_file' || exit 5
+    "
+}
+
+## LIST GET
+
+local_hash_list()
+{
+  {( set -e
+  find . -type f ! -regex "^./$syncdir/.*" | sed 's|^./||g' | tr '\n' '\0' | xargs -0 md5sum | cut -c1-33,35- | grep -vE "$ignores"
+  find . -type l | sed 's|^./||g' | while read -r ln
+  do
+    find "$ln" -maxdepth 0 -printf '%l' | md5sum | sed "s|-|$ln|g"
+  done | cut -c1-33,35- | grep -vE "$ignores"
+  ) || return $?; } | sort
+}
+
+server_hash_list()
+{
+  ssh "$raddr" "set -e
+    cd '$rdir'
+    find . -type f ! -regex '^./$syncdir/.*' | sed 's|^./||g' | tr '\n' '\0' | xargs -0 md5sum | cut -c1-33,35- | grep -vE '$ignores'
+    find . -type l | sed 's|^./||g' | while read -r ln
+    do
+      find \"\$ln\" -maxdepth 0 -printf '%l' | md5sum | sed \"s|-|\$ln|g\"
+    done | cut -c1-33,35- | grep -vE '$ignores'
+  " | sort
+}
+
+local_full_list() {
+  find . -mindepth 1 ! -regex "^./$syncdir\$" ! -regex "^./$syncdir/.*" | sed 's|^./||g' | grep -vE "$ignores" | sort
+}
+
+server_full_list() {
+  ssh "$raddr" "set -e
+    cd '$rdir'
+    find . -mindepth 1 ! -regex '^./$syncdir\$' ! -regex '^./$syncdir/.*' | sed 's|^./||g' | grep -vE '$ignores'
+    "| sort
+}
+
+write_lists()
+{
+  local_full_list > "$tree_full"
+  local_hash_list > "$tree_hash"
+}
+
+## FILTERS
+
+run_ignore() {
+  [ -n "$ignores" ] && grep -vE "$ignores" "$@"
+}
+
+# $1 = regex , $@ = args
+grep_after_sum()
+{
+  reg=$1
+  shift 1
+  grep --color=never -E "^[0-9a-f]{32} $reg" "$@"
+}
 # $@ = match these
 merge()
 {
   if [ $# -gt 0 ]
   then
-    re="^\./$1"
+    re="$1"
     shift 1
     for N
     do
-      re="$re|^\./$N"
+      re="$re|$N"
     done
-    grep -E "($re)"
+    grep -E "^($re)"
+    return 0
   else # don't change input
     cat
   fi
-  return 0
 }
 
-get_newer_local_files()
+reduce_list()
 {
-  TIME=$(cat "$timestamp_file" 2>/dev/null)
-  if [ "$TIME" -gt 0 ] 2>/dev/null
-  then
-    find . ! -type d ! -regex "^./$syncdir/.*" -newermt @$TIME | merge "$@"
-  else
-    find . ! -type d ! -regex "^./$syncdir/.*" | merge "$@"
-  fi
-}
-get_newer_server_files()
-{
-  TIME=$(cat "$timestamp_file" 2>/dev/null)
-  if [ "$TIME" -ge 0 ] 2>/dev/null
-  then
-    ssh $raddr "cd '$rdir' && find . ! -type d ! -regex '^\./$syncdir/.*' -newermt @$TIME" | merge "$@"
-  else
-    ssh $raddr "cd '$rdir' && find . ! -type d ! -regex '^\./$syncdir/.*'" | merge "$@"
-  fi
+  list="$(cat /dev/stdin)"
+  I=1
+  while true
+  do
+    ln=$(echo "$list" | sed -n "$I"p) # get nth line
+    [ -z "$ln" ] && break
+    list=$(echo "$list" | grep -v "^$ln/")
+    I=$((I+1))
+  done
+  echo "$list"
 }
 
-# full list
-get_server_list() {
-  ssh $raddr "cd '$rdir' || exit 1
-  find . ! -regex '^\./$syncdir.*'" | sort | merge "$@"
-}
-get_local_list() {
-  find . ! -regex "^\./$syncdir.*" | sort | merge "$@"
-}
+## DIFFERENCES
 
-get_server_composed_list()
+# find changes from list
+# $1 = list file , $@ = targets
+# requisite: file contains both hash and filename and is sorted
+list_diff()
 {
-  TIME=$(cat "$timestamp_file" 2>/dev/null)
-  [ "$TIME" -ge 0 ] 2>/dev/null || TIME=0
-  { ssh $raddr "cd '$rdir' || exit 1
-  {
-    find . ! -regex '^\./$syncdir.*'
-    find . ! -type d ! -regex '^\./$syncdir/.*' -newermt @$TIME
-  } | sort" ||  return $? ; } | merge "$@"
+  file=$1
+  shift 1
+  [ ! -f "$tree_hash" ] && { cut -c34- "$file" ; return 0; }
+  diff --old-line-format="" --unchanged-line-format="" "$tree_hash" "$file" | cut -c34- | merge "$@"
 }
 
 # find deleted from list
-# $1 = full list , $@ = merge
+# $1 = list file , $@ = targets
+# requisite: file contains only filename and is sorted
 get_deleted()
 {
-  [ ! -f "$tree_file" ] && return 0
-  arg=$1
+  file=$1
   shift 1
-  echo "$arg" | diff --new-line-format="" --unchanged-line-format="" "$tree_file" - | reduce_list | merge "$@"
+  [ ! -f "$tree_full" ] && return 0
+  diff --new-line-format="" --unchanged-line-format="" "$tree_full" "$file" | reduce_list | grep -vE "$ignores" | merge "$@"
 }
 
-# init
-init_local() {
-  mkdir -p "$syncdir" || exit $?
-}
-init_server() {
-  ssh $raddr "mkdir -p '$rdir/$syncdir' && { which rsync >/dev/null 2>&1 || { echo \"rsync not found on server\" >&2 && exit 1; } ; }" || return $?
-  # ssh $raddr "which rsync >/dev/null 2>&1" || { echo "rsync not found on server" >&2 && return 1; }
-}
+## TRANSACTIONS
 
-initandcheck_server() {
-  ssh $raddr "mkdir -p '$rdir/$syncdir' && cd '$rdir' {
-    which rsync >/dev/null 2>&1 || { echo \"rsync not found on server\" >&2 ; exit 1; } ;
-  } && {
-    [ ! -f '$lock_file' ] || { echo \"Server is busy, wait for sync completion\" ; exit 1; }
-  } && exit 0" || return $?
-  # ssh $raddr "which rsync >/dev/null 2>&1" || { echo "rsync not found on server" >&2 && return 1; }
-}
-full_prep_server() {
-  ssh $raddr "
-    mkdir -p '$rdir/$syncdir' || exit 1
-    cd '$rdir' || exit 2
-    which rsync >/dev/null 2>&1 || { echo rsync not installed on server >&2 ; exit 3; }
-    [ -f '$lock_file' ] && { echo Server is busy, wait for sync completion ; exit 4; }
-    touch '$lock_file' || exit 5
-    exit 0"
-  # ssh $raddr "which rsync >/dev/null 2>&1" || { echo "rsync not found on server" >&2 && return 1; }
-}
-
-# read file list from stdin
-# $1 = list of files
+# read list from stdin
+# $1 = dry mode
 send() {
   if [ "$1" = "dry" ]
   then
     echo "* files to send"
-    sed 's|\./||g'
+    cat
   else
     printf '* '
     rsync $rsync_opts --files-from=- --exclude=".zsync" -e ssh "$(pwd)" "$raddr:$rdir" || return $?
   fi
 }
 
-# read file list from stdin
+# read list from stdin
+# $1 = dry mode
 recieve() {
   if [ "$1" = "dry" ]
   then
     echo "* files to recieve"
-    sed 's|\./||g'
+    cat
   else
     printf '* '
     rsync $rsync_opts --files-from=- -e ssh "$raddr:$rdir" "$(pwd)" || return $?
@@ -187,15 +259,16 @@ recieve() {
 }
 
 
-# read delete from stdin
+# read list from stdin
+# $1 = dry mode
 delete_server() {
   if [ "$1" = "dry" ]
   then
     echo "* deleted to send"
-    sed 's|\./||g'
+    cat
   else
     echo "* sending deleted"
-    ssh $raddr "cd '$rdir' || exit 1
+    ssh "$raddr" "cd '$rdir' || exit 1
     trashutil='gio trash'
     which trash-put >/dev/null 2>&1 && trashutil=trash-put
     while read -r ln
@@ -206,11 +279,12 @@ delete_server() {
   fi
 }
 # read delete from stdin
+# $1 = dry mode
 delete_local() {
   if [ "$1" = "dry" ]
   then
     echo "* deleted to recieve"
-    sed 's|\./||g'
+    cat
   else
     echo "* recieving deleted"
     trashutil='gio trash'
@@ -222,31 +296,28 @@ delete_local() {
   fi
 }
 
-get_server() {
-  [ ! -f "$server_file" ] && return 1
-  raddr=$(cut -d ':' -f1 "$server_file")
-  rdir=$(cut -d ':' -f2- "$server_file")
-}
-
-setup_server()
-{
-  init_local || return $?
-  [ -z "$1" ] && echo "$fname server user@host:path" && return 1
-  echo "$1" > "$server_file"
-}
-
 forcepull()
 {
-  rsync $rsync_opts -r --delete -e ssh "$raddr:$rdir" "$(pwd)/." || return $?
-  sleep 1
-  set_timestamp_local
+  local ret=0
+  get_server  || return $?
+  init_local  || return $?
+  init_server || { unlock_local ; return $?; }
+  rsync $rsync_opts -r --delete -e ssh "$raddr:$rdir" "$(pwd)/." || ret=$?
+  unlock_all
+  write_lists
+  return $ret
 }
 
 forcepush()
 {
-  rsync $rsync_opts -r --delete -e ssh "$(pwd)/." "$raddr:$rdir" || return $?
-  sleep 1
-  set_timestamp_local
+  local ret=0
+  get_server  || return $?
+  init_local  || return $?
+  init_server || { unlock_local ; return $?; }
+  rsync $rsync_opts -r --delete -e ssh "$(pwd)/." "$raddr:$rdir" || ret=$?
+  unlock_all
+  write_lists
+  return $ret
 }
 
 # $1 = method (null/'push'/'pull') , $2 = dry (null/'dry') , $@ = files
@@ -256,42 +327,46 @@ sync()
   dry=$2
   shift 2
 
-  get_server  || { echo "Server not configured on this instance" >&2 && return 1; }
+  check_paths "$@" || return $?
+
+  get_server || { echo "Server not configured on this instance" >&2 && return 1; }
+  get_ignores
 
   # init and check local
-  init_local  || return $?
-  local_lock_check || return $?
+  init_local || return $?
 
   # init, check, and lock server
-  full_prep_server || {
-    case $? in
-      5) ret=$? ; unlock_server ; return $ret ;;
-      *) return $? ;;
-    esac
+  init_server || {
+    ret=$?
+    unlock_local
+    return $ret
   }
 
-  # lock
-  lock_local || { unlock_all ; return 1; }
+  tdir=$(tmpdir)
+  mkdir -p "$tdir"
 
-  # retrieve local lists
-  local_list=$(get_local_list "$@") || { unlock_all ; return 1; }
-  local_newer=$(get_newer_local_files "$@") || { unlock_all ; return 1; }
 
-  # retrieve server lists
-  server_composed_list=$(get_server_composed_list "$@") || { unlock_all; return 1; }
-  server_list=$(echo "$server_composed_list" | uniq)
-  server_newer=$(echo "$server_composed_list" | uniq -d)
+  local_full_list  > "$tdir/local_full"
+  local_hash_list  > "$tdir/local_hash"
+  server_full_list > "$tdir/server_full"
+  server_hash_list > "$tdir/server_hash"
 
+  # get changed on both sides
+  local_newer=$( list_diff "$tdir/local_hash"  "$@") || { rm -rf "$tdir" ; unlock_all ; return 1; }
+  server_newer=$(list_diff "$tdir/server_hash" "$@") || { rm -rf "$tdir" ; unlock_all ; return 1; }
+  # get deleted on both sides
+  deleted_local=$( get_deleted "$tdir/local_full"  "$@") || { rm -rf "$tdir" ; unlock_all ; return 1; }
+  deleted_server=$(get_deleted "$tdir/server_full" "$@") || { rm -rf "$tdir" ; unlock_all ; return 1; }
 
   # get collisions
-  collisions=$(printf "%s\n%s" "$local_newer" "$server_newer" | sort | uniq -d)
-  [ -n "$collisions" ] && [ "$method" != "push" ] && [ "$method" != pull ] && {
+  collisions=$(printf "%s\n%s\n" "$local_newer" "$server_newer" | sort | uniq -d)
+  [ -n "$collisions" ] && [ "$method" != push ] && [ "$method" != pull ] && {
     echo "-- There are file collisions" >&2
-    echo "$collisions" | sed 's|^\./||g'
+    echo "$collisions"
+    rm -rf "$tdir"
     unlock_all
     return 100
   }
-
 
   # remove collisions from opposing method
   [ -n "$collisions" ] && {
@@ -303,37 +378,31 @@ sync()
     fi
   }
 
-  # get deleted on both sides
-  deleted_local=$(get_deleted "$local_list" "$@") || { unlock_all ; return 1; }
-  deleted_server=$(get_deleted "$server_list" "$@") || { unlock_all ; return 1; }
-
   if [ -n "$local_newer" ] || [ -n "$server_newer" ] || [ -n "$deleted_local" ] || [ -n "$deleted_server" ]
   then
     # operations
     if [ "$method" = "pull" ]
     then
-      [ -n "$server_newer" ] && echo "$server_newer" | recieve "$dry" | sed 's|^\./||g'
-      [ -n "$local_newer"  ] && echo "$local_newer"  | send    "$dry" | sed 's|^\./||g'
+      [ -n "$server_newer" ] && echo "$server_newer" | recieve "$dry"
+      [ -n "$local_newer"  ] && echo "$local_newer"  | send    "$dry"
     else
-      [ -n "$local_newer"  ] && echo "$local_newer"  | send    "$dry" | sed 's|^\./||g'
-      [ -n "$server_newer" ] && echo "$server_newer" | recieve "$dry" | sed 's|^\./||g'
+      [ -n "$local_newer"  ] && echo "$local_newer"  | send    "$dry"
+      [ -n "$server_newer" ] && echo "$server_newer" | recieve "$dry"
     fi
-    # wait 1s to make sure, for timestamp
-    sleep 1 &
 
     # delete has no impact on timestamps
-    [ -n "$deleted_local"  ] && echo "$deleted_local"  | delete_server "$dry" | sed 's|^\./||g'
-    [ -n "$deleted_server" ] && echo "$deleted_server" | delete_local  "$dry" | sed 's|^\./||g'
+    [ -n "$deleted_local"  ] && echo "$deleted_local"  | delete_server "$dry"
+    [ -n "$deleted_server" ] && echo "$deleted_server" | delete_local  "$dry"
 
     # real run
     [ "$dry" != "dry" ] && {
-      # update tree
-      get_local_list > "$tree_file"
-      wait
-      # set timestamp
-      set_timestamp_local
+      # update lists
+      write_lists
     }
   fi
+
+  rm -rf "$tdir"
+
   unlock_all
 }
 
