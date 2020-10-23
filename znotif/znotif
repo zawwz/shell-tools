@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 _arg_t=2
 
@@ -6,25 +6,20 @@ fname=$(basename "$0")
 usage () {
   echo "$fname [options] [command]
 Sends notification when the given command finished executing
-  Options:
-    -h          Show this message then exit
-    -t <sec>    Time the notification stays. By default 2
-    -T <title>  Notification title
-    -m <string> Displays this message when finished. Variable resolution on
-                  > Default message is '<command> finished'
-    -y          Display a yes/no prompt instead. Time doesn't apply"
+
+Options:
+  -h          Show this message then exit
+  -t <sec>    Time the notification stays. By default 2
+  -T <title>  Notification title
+  -m <string> Displays this message when finished. Variable resolution on
+                > Default message is '<command> finished'
+  -y          Display a yes/no prompt instead. Time doesn't apply"
 }
 
-warning () {
-  if [ ! -n "$_opt_w" ] ; then
-    printf "\033[0;33m$1\033[0m\n" >&2
-  fi
+error() {
+  printf "\033[1;31m%s\033[0m\n" "$1" >&2
+  return 1
 }
-error () {
-    printf "\033[1;31m$1\033[0m\n" >&2
-}
-
-_args=""
 
 # $1 = message , $2 = title , $3 = time
 notify () {
@@ -34,7 +29,7 @@ notify () {
   elif which notify-send >/dev/null
   then
     notify-send -t "$3" "$2" "$1"
-  else echo "No supported notification" >&2 && return 1
+  else error "No supported notification"
   fi
 }
 
@@ -45,26 +40,21 @@ yesno () {
   elif which zenity
   then
     zenity --question --text="$1" --title="$2"
-  else "No supported prompt"
+  else error "No supported prompt"
   fi
 }
 
 # read options
-while getopts ":hym:T:t:" opt;
+unset opt_y opt_w
+while getopts ":hywm:T:t:" opt;
 do
   case $opt in
-    h)
-      usage
-      exit 1
-      ;;
-    y) _opt_y=y ;;
-    m)
-      [ ! -n "$OPTARG" ] && { error "m needs an argument" ; exit 2; }
-      message=$OPTARG
-      _opt_m=y
-      ;;
+    h) usage && exit 1 ;;
+    y) opt_y=y ;;
+    m) message=$OPTARG ;;
     T) title=$OPTARG ;;
     t) _arg_t=$OPTARG ;;
+    w) opt_w=y ;;
     \?) echo "Uknown option: $OPTARG" && usage && exit 2 ;;
     esac
 done
@@ -73,15 +63,15 @@ shift $((OPTIND-1))
 
 if [ $# -gt 0 ]
 then
-  [ ! -n "$_opt_m" ] && message="'$*' finished"
+  [ -z "$opt_m" ] && message="'$*' finished"
   [ -z "$title" ] && title=$*
-  $@
+  "$@"
 else
-  [ ! -n "$_opt_m" ] && message="Ping"
+  [ -z "$opt_m" ] && message="Ping"
   [ -z "$title" ] && title="Ping"
 fi
 
-if [ -n "$_opt_y" ]
+if [ -n "$opt_y" ]
 then
   yesno "$message" "$title"
 else
