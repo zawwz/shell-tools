@@ -1,5 +1,45 @@
 #!/bin/sh
 
+warning() {
+  if [ -z "$opt_w" ] ; then
+    printf "\033[0;33m%s\033[0m\n" "$1" >&2
+  fi
+}
+
+# $1 = bin name , $* = warn message
+# return value: passed
+warn_which()
+{
+  which "$1" >/dev/null 2>&1 || { warning "$*"; return 1; }
+}
+
+fullscreen_window()
+{
+  warn_which xwininfo "not found, fullscreen detection missing" || return $?
+  warn_which xdotool "not found, fullscreen detection missing" || return $?
+  info=$(xwininfo -id $(xdotool getactivewindow)) || return $?
+  window_geo=$(echo "$info" | awk '{if($1=="-geometry") print $2}')
+  if [ -n "$opt_A" ] # all screens not just main
+  then
+    # window geometry calculation
+    window_offset=$(echo "$info" | awk '{if($1=="Corners:") print $2}')
+    window_geo=$window_geo$window_offset
+    window_geo=$(echo "$window_geo" | cut -d '-' -f1 | cut -d '+' -f1)$window_offset
+    # get all monitor geometry
+
+    all_geo=$(xrandr | awk '{if($2 == "connected"){ if($3 == "primary") print $4;else print $3 }}' )
+    # test
+    echo "$all_geo" | grep -q "^$window_geo\$"
+  else
+    # get main monitor geometry
+    main_geo=$(xrandr | awk '{if($2 == "connected" && $3 == "primary") print $4}')
+    # test
+    [ "$window_geo" = "$main_geo" ]
+  fi
+}
+
+
+opt_A=y
 linuxpkgnames=""
 
 [ -z "$TMPDIR" ] && TMPDIR=/tmp
@@ -74,10 +114,18 @@ fi
 running_programs=$(get_running_programs "$packages")
 if [ -n "$running_programs" ]
 then
-  if ! znotif -T "System Updates" -y -m "The following running programs have recieved updates: \n$(echo "$running_programs" | sed 's|^|  -  |g')\nProceed?"
+  if fullscreen_window
   then
-    echo "Update cancelled" >&2
+    znotif -T "System Updates" -t 99999 -m "The following running programs have recieved updates while you were busy:
+$(echo "$running_programs" | sed 's|^|  -  |g')
+Run 'sysupdate' again to upgrade"
     stop 5
+  else
+    if ! znotif -T "System Updates" -y -m "The following running programs have recieved updates: \n$(echo "$running_programs" | sed 's|^|  -  |g')\nProceed?"
+    then
+      echo "Update cancelled" >&2
+      stop 5
+    fi
   fi
 fi
 
