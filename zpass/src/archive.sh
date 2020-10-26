@@ -76,7 +76,6 @@ create() {
     # if remote: file tmp
     [ -n "$ZPASS_REMOTE_ADDR" ] && {
       file="$TMPDIR/zpass_$(filehash)$ZPASS_EXTENSION"
-      [ -z "$ZPASS_PATH" ] && datapath="~/.local/share/zpass"
     }
     # get key
     [ -z "$ZPASS_KEY" ] && {
@@ -90,6 +89,7 @@ create() {
       return 1
     }
     [ -n "$ZPASS_REMOTE_ADDR" ] && {
+      ssh "$ZPASS_REMOTE_ADDR" "mkdir -p '$datapath'"
       if [ -n "$ZPASS_SSH_ID" ]
       then scp -i "$ZPASS_SSH_ID" "$file" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" >/dev/null || return $?
       else scp "$file" "$ZPASS_REMOTE_ADDR:$datapath/$ZPASS_FILE$ZPASS_EXTENSION" >/dev/null || return $?

@@ -14,8 +14,8 @@ shift 1
 
 case $arg in
   -h|h|help)        usage && exit 1;;
-  lsf|list-files)   find "$datapath" -type f -maxdepth 1 2>/dev/null | grep "$ZPASS_EXTENSION\$" | sed "s/$(escape_chars "$ZPASS_EXTENSION")\$//g" ;;
-  rmf|rm-file)      rm "$file" ;;
+  lsf|list-files)   list_files ;;
+  rmf|rm-file)      remove_files "$@" ;;
   cc|cache-clear)   clear_cache 2>/dev/null ;;
   ch|cached)        get_key_cached >/dev/null 2>&1 ;;
   rmc|rm-cache)     delete_cache 0 >/dev/null 2>&1 ;;

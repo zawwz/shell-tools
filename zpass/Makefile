@@ -1,5 +1,5 @@
 
-zpass:
+zpass: src/*
 	lxsh -mo zpass src/main.sh
 
 build: zpass

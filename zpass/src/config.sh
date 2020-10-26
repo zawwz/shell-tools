@@ -1,13 +1,13 @@
 #!/bin/sh
 
-# XDG config
-datapath="~/.local/share/zpass"
-cachepath="~/.cache/zpass"
-configpath="~/.config/zpass"
-[ -n "$XDG_DATA_HOME" ] && datapath="$XDG_DATA_HOME/zpass"
+# XDG config/cache
+datapath=".local/share/zpass"
+cachepath="$HOME/.cache/zpass"
+configpath="$HOME/.config/zpass"
 [ -n "$XDG_CONFIG_HOME" ] && configpath="$XDG_CONFIG_HOME/zpass"
 [ -n "$XDG_CACHE_HOME" ] && cachepath="$XDG_CACHE_HOME/zpass"
 [ -z "$CONFIGFILE" ] && CONFIGFILE="$configpath/default.conf"
+[ -n "$XDG_DATA_HOME" ] && [ -z "$ZPASS_REMOTE_ADDR" ] && datapath="$XDG_DATA_HOME/zpass"
 
 [ -z "$TMPDIR" ] && TMPDIR=/tmp
 
@@ -33,7 +33,14 @@ rm -f "$tmpenv" 2>/dev/null
 [ -z "$ZPASS_UNK_OP_CALL"     ] && ZPASS_UNK_OP_CALL=copy
 [ -z "$ZPASS_RAND_LEN"        ] && ZPASS_RAND_LEN=20
 
+# datapath resolution
+# remove tildes
+datapath="${datapath#\~/}"
+[ "$datapath" = '~' ] && datapath=""
+# if not remote and not absolute: add HOME
+[ -z "$ZPASS_REMOTE_ADDR" ] && [ "$(echo "$datapath" | cut -c1)" != '/' ] && datapath="$HOME/$datapath"
+
 file="$datapath/$ZPASS_FILE$ZPASS_EXTENSION"
 
-mkdir -p "$datapath" 2>/dev/null || error 1 "Could not create '$datapath'"
+[ -z "$ZPASS_REMOTE_ADDR" ] && { mkdir -p "$datapath" 2>/dev/null || error 1 "Could not create '$datapath'"; }
 mkdir -p "$cachepath" 2>/dev/null && chmod -R go-rwx "$cachepath" 2>/dev/null

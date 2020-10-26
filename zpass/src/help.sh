@@ -8,6 +8,7 @@ usage()
   list-files            List eligible files in data path. Shortcut 'lsf'
   cache-clear           Delete all cached keys. Shortcut 'cc'
   help                  Display help
+  rm-file <file...>     Remove files. Shortcut 'rmf'
 [File Operations]:
   ls [path]             List contents at given path
   tree                  List all contents
@@ -18,8 +19,7 @@ usage()
   new <path...>         Generate a random password at target
   rm <path...>          Delete targets
   mv <path...>          Move targets
-  exec <cmd>            Execute the following command inside the archive
-  rm-file               Remove the current file. Shortcut 'rmf'
+  exec <cmd>            Execute the following command inside the archive.
   cached                Returns wether or not a key is currently cached. Shortcut 'ch'
   rm-cache              Delete the cached key for this file. Shortcut 'rmc'
 

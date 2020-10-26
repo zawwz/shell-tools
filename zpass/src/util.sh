@@ -41,6 +41,20 @@ keyfile(){
   printf "%s.key" "$(filehash)"
 }
 
+_cmd_() {
+  if [ -n "$ZPASS_REMOTE_ADDR" ]
+  then
+    if [ -n "$ZPASS_SSH_ID" ]
+    then
+      ssh -i "$ZPASS_SSH_ID" "$ZPASS_REMOTE_ADDR" "$@" || return $?
+    else
+      ssh "$ZPASS_REMOTE_ADDR" "$@" || return $?
+    fi
+  else
+    sh -c "$*"
+  fi
+}
+
 # $1 = delay in sec
 clipboard_clear() {
   if [ -n "$1" ]
