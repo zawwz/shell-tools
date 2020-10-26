@@ -4,26 +4,25 @@ fname="$(basename "$0")"
 
 usage()
 {
-  echo "$fname [options] [path...]"
-  echo 'Display latest date of modification of any item in the path'
+  echo "$fname [options] [path...]
+Display latest date of modification of any item in the path
+
+Options:
+  -v            Invert, display oldest instead
+  -s            Format to UNIX epoch
+  -F <format>   Use the following date format. See 'man date'
+"
 }
 
-while getopts ":hs" opt;
+unset opt_s opt_v date_format
+while getopts ":hsvF:" opt;
 do
-  _opt=y
   case $opt in
-    h)
-      usage
-      exit 0
-      ;;
-    s)
-      _opt_s=y
-      ;;
-    \?)
-      echo "Uknown option: $OPTARG" >&2
-      usage
-      exit 1
-      ;;
+    h)  usage ; exit 0 ;;
+    s)  opt_s=y ;;
+    v)  opt_v=y ;;
+    F)  date_format=$OPTARG ;;
+    *)  echo "Unknown option: $OPTARG" >&2 ; usage ; exit 1 ;;
   esac
 done
 
@@ -32,12 +31,20 @@ shift $((OPTIND-1))
 targets="."
 [ $# -gt 0 ] && targets="$*"
 
-ret=$(find $targets -printf '%T@\n' | sort -n | tail -n1 | cut -d'.' -f1)
+if [ -n "$opt_v" ] ; then
+  ret=$(find $targets -printf '%T@\n' | sort -n | head -n1 | cut -d'.' -f1)
+else
+  ret=$(find $targets -printf '%T@\n' | sort -n | tail -n1 | cut -d'.' -f1)
+fi
 
-if [ -z "$_opt_s" ]
+
+if [ -n "$opt_s" ]
 then
+  true # do nothing: already in seconds
+elif [ -n "$date_format" ] ; then
+  ret=$(date --date="$date_format" 2>/dev/null)
+else # resolve to default date
   ret=$(date --date="@$ret" 2>/dev/null)
 fi
 
 [ -n "$ret" ] && echo $ret
-
