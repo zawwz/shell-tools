@@ -418,7 +418,7 @@ do
       arg_c="$OPTARG"
       ;;
     h) usage && exit 1 ;;
-    \?) echo "Uknown option: $OPTARG" >&2 && usage && exit 1 ;;
+    \?) echo "Unknown option: $OPTARG" >&2 && usage && exit 1 ;;
   esac
 done
 shift $((OPTIND-1))

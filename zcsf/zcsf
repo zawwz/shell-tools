@@ -10,15 +10,13 @@ Operations:
   make <type>           : create Makefile
   main                  : create main source file
   ls                    : list source names
-  src <type> <name...>  : create source files
+  src <type> <name...>  : create source files. Can be abbrieviated to 's'
   rm <name...>          : delete source files
   mv <name> <new>       : rename source files
   clear                 : delete all sources, headers, and binaries
   import <path> [name]  : import source files from another destination
   export <name> <path>  : export source files to another destination
-  rclean [path]         : perform a recursive '"'make clean ; make clear'"'
-
-Operation "src" can be abbrieviated to "s"'
+  rclean [path]         : perform a recursive '"'make clean ; make clear'"''
 }
 
 if [ -n "$XDG_DATA_HOME" ]
@@ -30,10 +28,7 @@ fi
 
 usr_datapath="/usr/share/zcsf"
 
-if [ -n "$CONFIGPATH" ]
-then
-  local_datapath="$CONFIGPATH"
-fi
+[ -n "$CONFIGPATH" ] && local_datapath="$CONFIGPATH"
 
 header_ifndef()
 {
@@ -76,7 +71,7 @@ load_env()
     CC=$(grep "CC=" "$MAKEFILE" | cut -d'=' -f2- | head -n1)
   fi
 
-  if [ "$CC" = "g++" ] || [ "$CPP" = "true" ]
+  if [ "$CC" = "g++" ]  || [ "$CC" = "clang++" ] || [ "$CPP" = "true" ]
   then
     PP="pp"
   fi

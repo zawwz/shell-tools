@@ -23,24 +23,22 @@ error() {
 
 # $1 = message , $2 = title , $3 = time
 notify () {
-  if which kdialog >/dev/null
-  then
+  if which kdialog >/dev/null ; then
     kdialog --passivepopup "$1" "$3" --title "$2"
-  elif which notify-send >/dev/null
-  then
+  elif which notify-send >/dev/null ; then
     notify-send -t "$3" "$2" "$1"
-  else error "No supported notification"
+  else
+    error "No supported notification"
   fi
 }
 
 yesno () {
-  if which kdialog >/dev/null
-  then
+  if which kdialog >/dev/null ; then
     kdialog --yesno "$1" --title "$2"
-  elif which zenity
-  then
+  elif which zenity ; then
     zenity --question --text="$1" --title="$2"
-  else error "No supported prompt"
+  else
+    error "No supported prompt"
   fi
 }
 
@@ -55,14 +53,14 @@ do
     T) title=$OPTARG ;;
     t) _arg_t=$OPTARG ;;
     w) opt_w=y ;;
-    \?) echo "Uknown option: $OPTARG" && usage && exit 2 ;;
+    *) echo "Unknown option: $OPTARG" >&2 ; usage ; exit 2 ;;
     esac
 done
 
 shift $((OPTIND-1))
 
-if [ $# -gt 0 ]
-then
+# exec and resolve message
+if [ $# -gt 0 ] ; then
   [ -z "$opt_m" ] && message="'$*' finished"
   [ -z "$title" ] && title=$*
   "$@"
@@ -71,8 +69,8 @@ else
   [ -z "$title" ] && title="Ping"
 fi
 
-if [ -n "$opt_y" ]
-then
+# Send the notification
+if [ -n "$opt_y" ] ; then
   yesno "$message" "$title"
 else
   notify "$message" "$title" "$_arg_t"

@@ -23,18 +23,9 @@ Options:
 while getopts ":hc:" opt;
 do
   case $opt in
-    h)
-      usage
-      exit 0
-      ;;
-    c)
-      config_file="$OPTARG"
-      ;;
-    \?)
-      echo "Uknown option: $OPTARG"
-      usage
-      exit 1
-        ;;
+    h) usage ; exit 0 ;;
+    c) config_file="$OPTARG" ;;
+    *) echo "Unknown option: $OPTARG" >&2 ; usage ; exit 1 ;;
     esac
 done
 
@@ -52,41 +43,15 @@ export vblank_mode=0
 
 shift $((OPTIND-1))
 
-if [ -n "$1" ]
-then
 
-  if [ "$1" = "start" ]; then
-    shift $((OPTIND))
-    wine $OSUDIR/osu\!.exe $@
-
-  elif [ "$1" = "kill" ]; then
-    wineserver -k
-
-  elif [ "$1" = "sound" ]; then
-
+case $1 in
+  start) shift $((OPTIND)) && wine "$OSUDIR/osu\!.exe" "$@" ;;
+  kill) wineserver -k ;;
+  sound)
     case $2 in
-      "pulse")
-        winetricks sound=pulse
-        ;;
-      "stable")
-        winetricks sound=pulse
-        ;;
-      "alsa")
-        winetricks sound=alsa
-        ;;
-      "lowlatency")
-        winetricks sound=alsa
-        ;;
-      *)
-        echo "$bin sound <pulse/alsa>"
-    esac
-
-  else
-    usage
-    exit 1
-  fi
-
-else
-  usage
-  exit 1
-fi
+      pulse|stable) winetricks sound=pulse ;;
+      alsa|lowlatency) winetricks sound=alsa ;;
+      *) echo "$bin sound <pulse/alsa>" >&2 ; exit 1 ;;
+    esac ;;
+  *) usage ; exit 1 ;;
+esac

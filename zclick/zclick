@@ -24,62 +24,30 @@ arg_i=20
 block_time=100
 
 
-if [ -z "$FOLDER" ]
-then
+[ -z "$FOLDER" ] && {
   if [ -n "$XDG_DATA_HOME" ]
   then
     FOLDER="$XDG_DATA_HOME/zclick"
   else
     FOLDER="$HOME/.local/share/zclick"
   fi
-fi
+}
 
 while getopts ":hi:b:dt" opt;
 do
   case $opt in
-    h)
-      usage
-      exit 0
-      ;;
-    i)
-      if ! [ "$OPTARG" -ge 0 ] 2>/dev/null
-      then
-        error "i argument has to be positive"
-        exit 2
-      fi
-      arg_i=$OPTARG
-      ;;
-    b)
-      if ! [ "$OPTARG" -ge 1 ] 2>/dev/null
-      then
-        error "b argument has to be strictly positive"
-        exit 2
-      fi
-      block_time=$OPTARG
-      ;;
-    d)
-      opt_d=y
-      ;;
-    t)
-      opt_t=y
-      ;;
-    \?)
-    	echo "Uknown option: $OPTARG"
-      usage
-      exit 1
-    	;;
+    h) usage && exit 0 ;;
+    i) [ "$OPTARG" -ge 0 ] 2>/dev/null || { error "i argument has to be positive" ; exit 2; }
+       arg_i=$OPTARG ;;
+    b) [ "$OPTARG" -ge 1 ] 2>/dev/null || { error "b argument has to be strictly positive" ; exit 2; }
+       block_time=$OPTARG ;;
+    d) opt_d=y ;;
+    t) opt_t=y ;;
+    \?) echo "Unknown option: $OPTARG" >&2 ; usage ; exit 1 ;;
     esac
 done
 
 shift $((OPTIND-1))
-
-if [ -n "$1" ] && ! [ "$1" -gt 0 ] 2>/dev/null
-then
-  error "Click ID has to be a strictly positive integer"
-  exit 2
-fi
-cid=$1
-
 
 mkdir -p "$FOLDER"
 
@@ -114,12 +82,9 @@ then
 
 else
   ## CONTROL
-
-  if [ -z "$cid" ]
-  then
-    usage
-    exit
-  fi
+  [ $# -le 0 ] && usage && exit 1
+  [ -n "$1" ] && ! [ "$1" -gt 0 ] 2>/dev/null && { error "Click ID has to be a strictly positive integer" ; exit 2; }
+  cid=$1
 
   if [ -n "$opt_t" ]
   then

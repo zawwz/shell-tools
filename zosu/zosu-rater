@@ -3,6 +3,7 @@
 if [ $# -lt 2 ]
 then
   echo "$0 <rate> <file>"
+  exit 1
 fi
 
 RATE="$1"
@@ -13,8 +14,7 @@ OUTPUTFILE="$(echo "$2" | sed 's/\.osu//g' | cut -d']' -f1) x$RATE].osu"
 AUDIO=$(grep "AudioFilename:" "$FILE" | cut -d' ' -f2- | tr -d '\n\r')
 AUDIORATED=$(echo $AUDIO | cut -d'.' -f1)-x$RATE".mp3"
 
-echo "" > $OUTPUTFILE
-rm "$OUTPUTFILE"
+echo "" > "$OUTPUTFILE"
 
 output_line () {
   printf "%s\r\n" "$1" >> $OUTPUTFILE

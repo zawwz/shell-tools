@@ -2,14 +2,15 @@
 
 shift $((OPTIND-1))
 
+# $@ = paths
+default_umask() {
+  find "$@" -type d -print0 | xargs -0 chmod "$(umask -S)" &&
+  find "$@" -type f -print0 | xargs -0 chmod "$(umask -S | tr -d 'x')"
+}
+
 if [ $# -gt 0 ]
 then
-  _path=$*
+  default_umask "$@"
 else
-  _path=$(pwd)
+  default_umask .
 fi
-
-#find "$_path" -type d -exec chmod $(umask -S) {} \;
-#find "$_path" -type f -exec chmod $(umask -S | tr -d 'x') {} \;
-chmod "$(umask -S)" $(find "$_path" -type d)
-chmod "$(umask -S | tr -d 'x')" $(find "$_path" -type f)

@@ -16,11 +16,10 @@ Options:
 
 gen_tr_lines_disk()
 {
-#  find /sys/block -maxdepth 1
   cd /sys/block
   for I in *
   do
-    _t=$(zdtol $I | head -n1)
+    _t=$(zdtol "$I" | head -n1)
     [ -n "$_t" ] && printf "/dev/%s:%s\n" "$I" "$_t"
   done
 }
@@ -42,8 +41,6 @@ fi
 
 DATA_PATH=$CONFIG_PATH/data/
 
-FILE=/dev/stdin
-
 while getopts ":hPsf:pdl" opt;
 do
   _opt=y
@@ -51,25 +48,21 @@ do
     h) usage && exit 0 ;;
     P) _opt_P=y ;;
     s) _opt_s=y ;;
-    f)
-       _opt_f=y
+    f) _opt_f=y
        _arg_f=$OPTARG
        _opt_data=y
        ;;
-    d)
-      _opt_d=y
-      _opt_data=y
-      ;;
-    p)
-      _opt_p=y
-      _opt_data=y
-      ;;
-    l)
-      _opt_l=y
-      _opt_data=y
-      ;;
+    d) _opt_d=y
+       _opt_data=y
+       ;;
+    p) _opt_p=y
+       _opt_data=y
+       ;;
+    l) _opt_l=y
+       _opt_data=y
+       ;;
     \?)
-      echo "Uknown option: $OPTARG" >&2
+      echo "Unknown option: $OPTARG" >&2
       usage
       exit 1
       ;;
@@ -78,40 +71,27 @@ done
 
 shift $((OPTIND-1))
 
-if [ -z "$_opt_data" ]
-then
+[ -z "$_opt_data" ] && {
   _opt_p=y
   _opt_d=y
   _opt_l=y
   _opt_L=y
-fi
+}
 
 mkdir -p "$DATA_PATH"
 
-LINES=""
 
-if [ -n "$_opt_f" ]
-then
-  LINES="$(printf "%s\n%s" "$LINES" "$(cat "$_arg_f")" )"
-fi
-if [ -n "$_opt_l" ]
-then
-  LINES="$(printf "%s\n%s" "$LINES" "$(cat "$DATA_PATH"/* 2>/dev/null)" )"
-fi
-if [ -n "$_opt_p" ]
-then
-  LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_part)" )"
-fi
-if [ -n "$_opt_d" ]
-then
-  LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_disk)" )"
-fi
+LINES=""
+[ -n "$_opt_f" ] && LINES="$(printf "%s\n%s" "$LINES" "$(cat "$_arg_f")" )"
+[ -n "$_opt_l" ] && LINES="$(printf "%s\n%s" "$LINES" "$(cat "$DATA_PATH"/* 2>/dev/null)" )"
+[ -n "$_opt_p" ] && LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_part)" )"
+[ -n "$_opt_d" ] && LINES="$(printf "%s\n%s" "$LINES" "$(gen_tr_lines_disk)" )"
 
 LINES=$(echo "$LINES" | grep -v '^$')
 
-if [ -n "$1" ] ; then
-  FILE="$1"
-fi
+FILE=/dev/stdin
+[ -n "$1" ] && FILE="$1"
+
 if [ -t 0 ] || [ -n "$_opt_P" ] && [ -z "$1" ]
 then
 

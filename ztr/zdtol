@@ -43,7 +43,7 @@ do
       _opt_d=y
       ;;
     \?)
-      echo "Uknown option: $OPTARG" >&2
+      echo "Unknown option: $OPTARG" >&2
       usage
       exit 1
       ;;
