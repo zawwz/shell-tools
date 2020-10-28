@@ -61,11 +61,11 @@ shift $((OPTIND-1))
 
 # exec and resolve message
 if [ $# -gt 0 ] ; then
-  [ -z "$opt_m" ] && message="'$*' finished"
+  [ -z "$message" ] && message="'$*' finished"
   [ -z "$title" ] && title=$*
   "$@"
 else
-  [ -z "$opt_m" ] && message="Ping"
+  [ -z "$message" ] && message="Ping"
   [ -z "$title" ] && title="Ping"
 fi
 
