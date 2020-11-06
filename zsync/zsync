@@ -13,7 +13,7 @@ config_file=".zsync/config"
 
 rsync_opts='-rvlpE'
 
-TMPDIR=${TMPDIR-/tmp}
+tmpdir=${TMPDIR-/tmp}
 
 # usage
 fname=$(basename "$0")
@@ -47,7 +47,7 @@ check_paths()
 }
 
 tmpdir() {
-  echo "$TMPDIR/zsync_$(tr -dc '[:alnum:]' </dev/urandom | head -c20)"
+  echo "$tmpdir/zsync_$(tr -dc '[:alnum:]' </dev/urandom | head -c20)"
 }
 
 ## CONFIG
@@ -123,7 +123,7 @@ init_server() {
 
 local_hash_list()
 {
-  {( set -e
+  { ( set -e
   find . -type f ! -regex "^./$syncdir/.*" | sed 's|^./||g' | tr '\n' '\0' | xargs -0 md5sum | cut -c1-33,35- | grep -vE "$ignores"
   find . -type l | sed 's|^./||g' | while read -r ln
   do
