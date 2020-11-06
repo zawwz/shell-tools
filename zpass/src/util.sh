@@ -26,8 +26,8 @@ sanitize_paths()
 
 # $1 = file
 getpath() {
-  if [ -n "$REMOTE_ADDR" ]
-  then echo "$REMOTE_PORT:$REMOTE_ADDR:$file"
+  if [ -n "$ZPASS_REMOTE_ADDR" ]
+  then echo "$ZPASS_REMOTE_PORT:$ZPASS_REMOTE_ADDR:$file"
   else readlink -f "$file"
   fi
 }
