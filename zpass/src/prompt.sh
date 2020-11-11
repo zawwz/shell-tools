@@ -3,13 +3,17 @@
 # $1 = prompt
 console_prompt_hidden()
 {
-  local prompt
-  printf "%s" "$1" >&2
-  stty -echo
-  read -r prompt || return $?
-  stty echo
-  printf "\n" >&2
-  echo "$prompt"
+  (
+    _tty_on() { stty echo; }
+    trap _tty_on INT
+    local prompt
+    printf "%s" "$1" >&2
+    stty -echo
+    read -r prompt || { stty echo; return 1; }
+    stty echo
+    printf "\n" >&2
+    echo "$prompt"
+  )
 }
 
 # $1 = prompt message
