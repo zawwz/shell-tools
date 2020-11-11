@@ -16,6 +16,7 @@ usage()
   get <path...>         Get values of targets
   copy <path>           Copy the target value to clipboard. Shortcut 'x'
   set <path> <value>    Set the value of target
+  add <path...>         Prompt for input value on paths
   new <path...>         Generate a random password at target
   rm <path...>          Delete targets
   mv <path...>          Move targets

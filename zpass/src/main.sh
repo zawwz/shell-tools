@@ -22,6 +22,7 @@ case $arg in
   c|create)         create      ;;
   t|tree)           _tree "$@"  ;;
   s|set)            _set "$@"   ;;
+  a|add)            add "$@"    ;;
   n|new)            new "$@"    ;;
   g|get)            get "$@"    ;;
   x|copy)           copy "$1"   ;;
