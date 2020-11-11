@@ -1,6 +1,8 @@
 
+var_exclude = ZPASS_.* XDG_.* REMOTE_.* DISPLAY CONFIGFILE TMPDIR
+
 zpass: src/*
-	lxsh -mo zpass src/main.sh
+	lxsh -o zpass -m --minimize-var --exclude-var "$(var_exclude)" --minimize-fct --remove-unused src/main.sh
 
 build: zpass
 
