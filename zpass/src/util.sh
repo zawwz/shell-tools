@@ -13,13 +13,17 @@ escape_chars() {
   echo "$*" | sed 's|\.|\\\.|g;s|/|\\/|g'
 }
 
+remove_trailing_newline() {
+  awk 'NR>1{print PREV} {PREV=$0} END{printf("%s",$0)}'
+}
+
 # $@ = paths
 sanitize_paths()
 {
   for N
   do
-    echo "$N" | grep "^/" && echo "Path cannot start with /" >&2 && return 1
-    echo "$N" | grep -w ".." && echo "Path cannot contain .." >&2 && return 1
+    echo "$N" | grep -q "^/" && echo "Path cannot start with /" >&2 && return 1
+    echo "$N" | grep -qw ".." && echo "Path cannot contain .." >&2 && return 1
   done
   return 0
 }
@@ -52,19 +56,5 @@ _cmd_() {
     fi
   else
     sh -c "$*"
-  fi
-}
-
-# $1 = delay in sec
-clipboard_clear() {
-  if [ -n "$1" ]
-  then
-    for I in $(screen -ls | grep "$fname"_clipboard | awk '{print $1}')
-    do
-      screen -S "$I" -X stuff "^C"
-    done
-    screen -dmS "$fname"_clipboard sh -c "sleep $1 ; xclip -selection clipboard < /dev/null ; sleep 1" # put empty string into clipboard
-  else
-    xclip -selection clipboard < /dev/null
   fi
 }

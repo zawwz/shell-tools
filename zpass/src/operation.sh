@@ -37,7 +37,8 @@ get()
 # $1 = path
 copy()
 {
-  { get "$1" || return $?; } | tr -d '\n' | xclip -selection clipboard && clipboard_clear "$ZPASS_CLIPBOARD_TIME"
+  copy_check || return $?
+  { get "$1" || return $?; } | remove_trailing_newline | clipboard && clipboard_clear "$ZPASS_CLIPBOARD_TIME"
 }
 
 # $@ = path
