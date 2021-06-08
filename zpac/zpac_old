@@ -1,7 +1,5 @@
 #!/bin/sh
 
-[ "$DEBUG" = true ] && set -x
-
 usage()
 {
   echo "Usage: zpac <operation> [sub-operation]"
@@ -62,7 +60,7 @@ get_list_sinks()
 {
   if [ -z "$LIST_SINKS" ]
   then
-    LIST_SINKS="$(pactl list sinks)"
+    LIST_SINKS="$(pacmd list-sinks)"
   fi
 }
 list_sinks() { echo "$LIST_SINKS"; }
@@ -71,7 +69,7 @@ get_list_sink_inputs()
 {
   if [ -z "$LIST_SINK_INPUTS" ]
   then
-    LIST_SINK_INPUTS="$(pactl list sink-inputs)"
+    LIST_SINK_INPUTS="$(pacmd list-sink-inputs)"
   fi
 }
 list_sink_inputs() { echo "$LIST_SINK_INPUTS"; }
@@ -80,25 +78,28 @@ get_list_sources()
 {
   if [ -z "$LIST_SOURCES" ]
   then
-    LIST_SOURCES="$(pactl list sources)"
+    LIST_SOURCES="$(pacmd list-sources)"
   fi
 }
-# list_sources() { echo "$LIST_SOURCES"; }
 list_sources() { echo "$LIST_SOURCES"; }
 
 master_index() {
-  list_sinks | grep -E "(^Sink #)|(State: RUNNING)" | grep "State: RUNNING" -B1 | head -n1 | cut -d'#' -f2
+  list_sinks | grep "* index:" | awk '{print $3}'
 }
 
 ##############
 # SINK OPERATIONS
 sinkvolume()
 {
-  list_sinks | grep -E "(^Sink #)|(front-left: )" | grep "^Sink #$1" -A1 | tail -n1 | cut -d/ -f2 | tr -d ' '
+  list_sinks | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $3}'
+}
+sinkvolumep()
+{
+  list_sinks | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $5}'
 }
 sinkvolumeset()
 {
-  R="$(pactl set-sink-volume "$1" "$2")"
+  R="$(pacmd set-sink-volume "$1" "$(value $2)")"
   if [ -z "$R" ] ; then
     echo "$3 @ $2"
   else
@@ -107,14 +108,14 @@ sinkvolumeset()
 }
 sinkmutestate()
 {
-  if [ "$(list_sinks | grep -E "(^Sink #$1)|(Mute: )" | grep "^Sink #$1" -A1 | tail -n1 | awk '{print $2}')" = "yes" ]
+  if [ "$(list_sinks | grep -E "(index: $1)|(muted: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')" = "yes" ]
   then echo "$2 mute on"
   else echo "$2 mute off"
   fi
 }
 sinkmuteset()
 {
-  R="$(pactl set-sink-mute "$1" "$2")"
+  R="$(pacmd set-sink-mute "$1" "$(value $2)")"
   if [ -z "$R" ] ; then
     if [ "$2" -eq 1 ]
     then echo "$3 mute on"
@@ -137,7 +138,11 @@ sinkmutetoggle()
 # SINK INPUT OPERATIONS
 sinkinvolume()
 {
-  list_sink_inputs | grep -E "(Sink Input #)|(Volume: )" | grep "Sink Input #$1" -A1 | tail -n1 | cut -d/ -f2 | tr -d ' '
+  list_sink_inputs | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $3}'
+}
+sinkinvolumep()
+{
+  list_sink_inputs | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $5}'
 }
 sinkinlist()
 {
@@ -145,10 +150,10 @@ sinkinlist()
 }
 sinkinvolumeset()
 {
-  # sinkid=$(list_sink_inputs | grep -E "(index: $1)|(sink: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')
-  # sinkvol=$(list_sinks | grep -E "(index: )|(volume: )" | grep "index: $sinkid" -A1 | tail -n1 | awk '{print $3}')
-  # val=$(echo "$(value $2)"'*'"$sinkvol / 65536" | bc)
-  R="$(pactl set-sink-input-volume "$1" "$2")"
+  sinkid=$(list_sink_inputs | grep -E "(index: $1)|(sink: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')
+  sinkvol=$(list_sinks | grep -E "(index: )|(volume: )" | grep "index: $sinkid" -A1 | tail -n1 | awk '{print $3}')
+  val=$(echo "$(value $2)"'*'"$sinkvol / 65536" | bc)
+  R="$(pacmd set-sink-input-volume "$1" "$val")"
   if [ -z "$R" ] ; then
     echo "app \"$3\" @ $2"
   else
@@ -157,22 +162,26 @@ sinkinvolumeset()
 }
 sinkin_get_indexes()
 {
-  list_sink_inputs | grep -E "(^Sink Input #)|(application.process.binary = )" | grep -F "application.process.binary = \"$1\"" -B1 | grep '^Sink Input' | cut -d'#' -f2
+  list_sink_inputs | grep -E "(index: )|(application.process.binary = )" | grep "application.process.binary = \"$1\"" -B1 | head -n1 | awk '{print $2}'
 }
 
 #############
 # SOURCE OPERATIONS
 sourcelist()
 {
-  list_sources | grep -F alsa.card_name | cut -d '"' -f2
+  list_sources | grep device.product.name | cut -d '"' -f2
 }
 sourcevolume()
 {
-  list_sources | grep -E "(^Source #)|(Volume: )" | grep "^Source #$1" -A1 | tail -n1 | cut -d '/' -f2 | tr -d ' '
+  list_sources | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $3}'
+}
+sourcevolumep()
+{
+  list_sources | grep -E "(index: )|(volume: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $5}'
 }
 sourcevolumeset()
 {
-  R="$(pactl set-source-volume "$1" "$2")"
+  R="$(pacmd set-source-volume "$1" "$(value $2)")"
   if [ -z "$R" ] ; then
     echo "mic \"$3\" @ $2"
   else
@@ -181,18 +190,16 @@ sourcevolumeset()
 }
 source_get_default_name()
 {
-  list_sources | grep -E '(State: RUNNING)|(alsa.card_name = )'  | grep -B1 "State: RUNNING" | tail -n1 | cut -d '"' -f2
+  list_sources | grep -E '(* index: )|(device.product.name = )'  | grep -A1 "* index: " | tail -n1 | cut -d '"' -f2
 }
 source_get_index()
 {
   if [ "$1" = "default" ]
   then
-    list_sources | grep -E '(Source #)|(State: RUNNING)'  | grep -B1 "State: RUNNING" | head -n1 | cut -d '#' -f2
-    # list_sources | grep '* index: ' | awk '{print $3}'
+    list_sources | grep '* index: ' | awk '{print $3}'
   elif [ -n "$1" ]
   then
-    list_sources list sources | grep -E "(Source #)|(alsa.card_name = \"$1\")"  | grep -B1 "alsa.card_name = \"$1\"" | head -n1 | cut -d '#' -f2
-    # list_sources | grep -E "(index: )|(device.product.name = )" | tr '*' ' ' | grep "device.product.name = \"$1"\" -B1 | grep "index:" | awk '{print $2}'
+    list_sources | grep -E "(index: )|(device.product.name = )" | tr '*' ' ' | grep "device.product.name = \"$1"\" -B1 | grep "index:" | awk '{print $2}'
   fi
 }
 source_name()
@@ -206,14 +213,14 @@ source_name()
 }
 sourcemutestate()
 {
-  if [ "$(list_sources | grep -E "(Source #$1)|(Mute: )" | grep "Source #$1" -A1 | tail -n1 | awk '{print $2}')" = "yes" ]
+  if [ "$(list_sources | grep -E "(index: $1)|(muted: )" | grep "index: $1" -A1 | tail -n1 | awk '{print $2}')" = "yes" ]
   then echo "mic \"$2\" mute on"
   else echo "mic \"$2\" mute off"
   fi
 }
 sourcemuteset()
 {
-  R="$(pactl set-source-mute "$1" "$2")"
+  R="$(pacmd set-source-mute "$1" "$(value $2)")"
   if [ -z "$R" ] ; then
     if [ "$2" -eq 1 ]
     then echo "mic \"$3\" mute on"
@@ -270,7 +277,7 @@ then
     do
       for I in $(sinkin_get_indexes "$N")
       do
-        sinkinvolume $I
+        sinkinvolumep $I
       done
     done
 
@@ -295,7 +302,7 @@ then
     fi
 
   else
-    echo "zpac app <list/volume/setvolume>"
+    echo "zpac app <list/setvolume>"
   fi
 
 elif [ "$1" = "mic" ]
@@ -313,7 +320,7 @@ then
     shift $((OPTIND+1))
     for N
     do
-      sourcevolume $(source_get_index "$N")
+      sourcevolumep $(sinkin_get_indexes "$N")
     done
 
   elif [ "$2" = "setvolume" ]
