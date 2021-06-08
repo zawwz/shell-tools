@@ -246,19 +246,19 @@ Types:
   clear)
     make clean >/dev/null 2>&1 ;  make clear >/dev/null 2>&1
     # bin
-    [ "$BINDIR" != "." ] && rm -rd "$BINDIR" 2> /dev/null
+    [ "$BINDIR" != "." ] && rm -r "$BINDIR" 2> /dev/null
     # src
     if [ "$SRCDIR" != "." ]
-    then rm -rd "$SRCDIR" 2> /dev/null
+    then rm -r "$SRCDIR" 2> /dev/null
     else rm ./*.c ./*.cpp 2> /dev/null
     fi
     # include
     if [ "$IDIR" != "." ]
-    then rm -rd "$IDIR" 2> /dev/null
+    then rm -r "$IDIR" 2> /dev/null
     else rm ./*.h ./*.hpp 2> /dev/null
     fi
     # obj
-    [ "$ODIR" != "." ] && rm -rd "$ODIR" 2> /dev/null
+    [ "$ODIR" != "." ] && rm -r "$ODIR" 2> /dev/null
   ;;
 
   src|s)
