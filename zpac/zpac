@@ -7,6 +7,7 @@ usage()
   echo "Usage: zpac <operation> [sub-operation]"
   echo "Operations:"
   echo "  master      : Master volume operation"
+  echo "  sink        : Sink volume operation"
   echo "  app         : Application volume operation"
   echo "  mic         : Mic operation"
   echo "  fx          : FX operation"
@@ -35,24 +36,24 @@ tsched_1() {
 
 FXon()
 {
-  screen -dmS "pulseeffects" pulseeffects --gapplication-service > /dev/null 2>&1
+  screen -dmS "$FXcmd" $FXcmd --gapplication-service > /dev/null 2>&1
   echo "FX on"
 }
 FXoff()
 {
-  pulseeffects -q
+  $FXcmd -q
   echo "FX off"
 }
 FXtoggle()
 {
-  if [ "$(pgrep -c pulseeffects)" -lt 1 ]
+  if [ "$(pgrep -c $FXcmd)" -lt 1 ]
   then FXon
   else FXoff
   fi
 }
 FXstate()
 {
-  if [ "$(pgrep -c pulseeffects)" -ge 1 ]
+  if [ "$(pgrep -c $FXcmd)" -ge 1 ]
   then echo "FX on"
   else echo "FX off"
   fi
@@ -90,6 +91,14 @@ master_index() {
   list_sinks | grep -E "(^Sink #)|(State: RUNNING)" | grep "State: RUNNING" -B1 | head -n1 | cut -d'#' -f2
 }
 
+sink_list() {
+  list_sinks | grep "Description:" | cut -d: -f2- | cut -d' ' -f2-
+}
+
+sink_get_index() {
+  list_sinks | grep -E "(^Sink #)|(Description:)" | grep "Description: $1" -B1 | head -n1 | cut -d'#' -f2
+}
+
 ##############
 # SINK OPERATIONS
 sinkvolume()
@@ -114,7 +123,7 @@ sinkmutestate()
 }
 sinkmuteset()
 {
-  R="$(pactl set-sink-mute "$1" "$2")"
+  R="$(pactl set-sink-mute "$1" "$2" 2>&1)"
   if [ -z "$R" ] ; then
     if [ "$2" -eq 1 ]
     then echo "$3 mute on"
@@ -238,6 +247,7 @@ then
   exit 1
 elif [ "$1" = "master" ]
 then
+
   get_list_sinks
   case $2 in
     setvolume) sinkvolumeset $(master_index) $3 "master" ;;
@@ -252,6 +262,28 @@ then
       esac
     ;;
     *) echo "zpac master <volume/setvolume/mute>" && exit 1 ;;
+  esac
+
+elif [ "$1" = "sink" ]
+then
+  get_list_sinks
+  if [ "$2" = list ] ; then
+    sink_list
+    exit $?
+  fi
+  case $3 in
+    setvolume) sinkvolumeset "$(sink_get_index "$2")" "$4" "$2" ;;
+    volume)    sinkvolumep "$(sink_get_index "$2")" "$4" "$2"   ;;
+    mute)
+      case $4 in
+        on)     sinkmuteset "$(sink_get_index "$2")" 1 "$2"   ;;
+        off)    sinkmuteset "$(sink_get_index "$2")" 0 "$2"   ;;
+        toggle) sinkmutetoggle "$(sink_get_index "$2")" "$2"  ;;
+        state)  sinkmutestate "$(sink_get_index "$2")" "$2"  ;;
+        *) echo "zpac sink <sink> mute <on/off/toggle/state>" && exit 1 ;;
+      esac
+    ;;
+    *) echo "zpac sink <sink> <volume/setvolume/mute>" && exit 1 ;;
   esac
 
 elif [ "$1" = "app" ]
@@ -358,15 +390,17 @@ then
 
 elif [ "$1" = "fx" ]
 then
-  [ -z "$(which pulseeffects)" ] && echo "No FX available" >&2 && exit 1
+  FXcmd=easyeffects
+  which easyeffects >/dev/null 2>&1 || { which pulseeffects >/dev/null 2>&1 && FXcmd=pulseeffects ; } || {
+    echo "No FX available" >&2 && exit 1
+  }
 
   case $2 in
     on|off|toggle|state) MODE=$2 ;;
     *) echo "zpac fx <on/off/toggle/state>" && exit 1 ;;
   esac
 
-  if [ -z "$3" ] #all fx
-  then
+  if [ -z "$3" ] ; then
     case $MODE in
       on)     FXon     ;;
       off)    FXoff    ;;
