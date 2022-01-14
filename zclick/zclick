@@ -1,19 +1,30 @@
 #!/bin/sh
 
+[ "$DEBUG" = true ] && set -x
+
 fname=$(basename "$0")
 usage()
 {
-  echo "$fname [options] [clickID]
+  cat << EOF
+$fname [options] <operation>
 Automatic clicker. Click ID is: 1=left , 2=middle , 3=right
 To run the clicker, you need to start the daemon and then run the commands
 
+Operations:
+  get                 List running operations
+  click [click id]    Enable clicking
+  mod <device id>     Watch for clicks on device and operate when active
+                        * Use 'xinput list' to see devices
+
 [Daemon Options]
   -d        Run daemon
-  -b <ms>   Time per block of operation in ms. Default 100
+  -S <path> Path to use for socket file, default: '$XDG_RUNTIME_DIR/zclick.sock'
 [Client options]
   -h        Display this help
   -i <ms>   Interval between clicks in ms, 0 for no clicking. Default 20
-  -t        Toggle clicking. Sets interval to 0 if current value was != 0"
+  -S <path> Use this socket to communicate with daemon, default: '$XDG_RUNTIME_DIR/zclick.sock'
+  -t        Toggle clicking
+EOF
 }
 
 error () {
@@ -21,83 +32,264 @@ error () {
 }
 
 arg_i=20
-block_time=100
+block_time=200
+sockfile=$XDG_RUNTIME_DIR/zclick.sock
+tmpdir=${TMPDIR-/tmp}/zclick$daemon_port
 
+binreq()
+{
+  for I ; do
+    which "$I" >/dev/null || { echo "$I not installed" >&2 && return 1; }
+  done
+}
 
-[ -z "$FOLDER" ] && {
-  if [ -n "$XDG_DATA_HOME" ]
-  then
-    FOLDER="$XDG_DATA_HOME/zclick"
+_daemon_stop()
+{
+  kill -9 $(echo "$modstates" | cut -d ' ' -f3) $(echo "$clickstates" | cut -d ' ' -f3) $(jobs -p) >/dev/null 2>&1
+  rm -rf "$inputfifo" "$tmpdir"
+  echo "stopped" >&2
+  exit $1
+}
+
+# $1 = N , $@ = value
+nval()
+{
+  n=$1
+  shift 1
+  echo "$@" | tr -s ' ' | cut -d ' ' -f$n
+}
+
+# $1 = ln , $2 = value
+lneq()
+{
+  echo "$1" | grep -q "^$2$"
+}
+
+# $1 = cid , $2 = interval
+doclick()
+{
+  N=$(($block_time / $2))
+  [ "$N" -lt 1 ] && N=1
+  while true ; do
+    # sleep $(echo "scale=3; $N*$interval/1000" | bc) # dummy sleep
+    xdotool click --repeat $N --delay $2 $1
+  done
+}
+
+# $1 = id , $2 = interval
+domod()
+{
+  N=$(($block_time / $2))
+  [ "$N" -lt 1 ] && N=1
+  while
+    sleep $(echo "scale=3; $N*$interval/1000" | bc) &
+    sleepjob=$!
+    statedown=$(xinput query-state "$1" | grep -o '[1-9][0-9]*\]=down' | cut -d ']' -f1 | head -n1)
+    for cid in $statedown ; do
+      xdotool click --repeat $N --delay $2 "$cid" &
+    done
+    wait $sleepjob
+  do true ; done
+}
+
+unset clickstates
+# format:
+# clickid interval pid
+
+# $1 = id
+clickjob_state()
+{
+  if echo "$clickstates" | grep -q "^$1 " ; then
+    echo "$clickstates" | grep "^$1 " | cut -d ' ' -f2
   else
-    FOLDER="$HOME/.local/share/zclick"
+    echo 0
   fi
 }
 
-while getopts ":hi:b:dt" opt;
+all_clickjob_states()
+{
+  echo "$clickstates" | cut -d ' ' -f1-2 | grep -v '^$'
+}
+
+# $1 = id , $2 = value
+clickjob()
+{
+  # kill
+  jobid=$(echo "$clickstates" | grep "^$1 " | cut -d ' ' -f3)
+  if [ -n "$jobid" ] ; then
+    kill -9 $jobid >/dev/null 2>&1
+    clickstates=$(echo "$clickstates" | sed "/^$1 /d")
+  fi
+
+  if [ "$2" -gt 0 ] ; then
+    doclick "$1" "$2" &
+    clickstates="$clickstates
+$1 $2 $!"
+  fi
+}
+
+unset modstates
+# format:
+# deviceid interval pid
+
+# $1 = id
+modjob_state()
+{
+  if echo "$modstates" | grep -q "^$1 " ; then
+    echo "$modstates" | grep "^$1 " | cut -d ' ' -f2
+  else
+    echo 0
+  fi
+}
+
+all_modjob_states()
+{
+  echo "$modstates" | cut -d ' ' -f1-2 | grep -v '^$'
+}
+
+# $1 = id , $2 = value
+modjob()
+{
+  # kill
+  jobid=$(echo "$modstates" | grep "^$1 " | cut -d ' ' -f3)
+  if [ -n "$jobid" ] ; then
+    kill -9 $jobid >/dev/null 2>&1
+    modstates=$(echo "$modstates" | sed "/^$1 /d")
+  fi
+
+  if [ "$2" -gt 0 ] ; then
+    domod "$1" "$2" &
+    modstates="$modstates
+$1 $2 $!"
+  fi
+}
+
+process_one_line()
+{
+  # if lneq "$ln" "mod [ ]*[1-9][0-9]* [ ]*[0-9][0-9]*" 2>/dev/null ; then
+  if [ "$(nval 1 $ln)" = "mod" ] 2>/dev/null ; then
+    did=$(nval 2 "$ln")
+    interval=$(nval 3 "$ln")
+    modjob "$did" "$interval"
+
+  # elif lneq "$ln" "click [ ]*[1-9][0-9]* [ ]*[0-9][0-9]*" ; then
+  elif [ "$(nval 1 $ln)" = "click" ] 2>/dev/null ; then
+    cid=$(nval 2 "$ln")
+    interval=$(nval 3 "$ln")
+    clickjob "$cid" "$interval"
+
+  elif [ "$(nval 1 "$ln")" = "get" ] ; then
+
+    if [ "$(nval 2 "$ln")" = "click" ] ; then
+      n=$(nval 3 "$ln")
+      if [ -n "$n" ] ; then
+        clickjob_state "$n"
+      else
+        all_clickjob_states
+      fi
+    elif [ "$(nval 2 "$ln")" = "mod" ] ; then
+      n=$(nval 3 "$ln")
+      if [ -n "$n" ] ; then
+        modjob_state "$n"
+      else
+        all_modjob_states
+      fi
+    else
+      all_clickjob_states | sed 's|^|click |g'
+      all_modjob_states | sed 's|^|mod |g'
+    fi
+
+  fi
+}
+
+tmpout="$tmpdir/fifo_out"
+tmpin="$tmpdir/fifo_in"
+daemon()
+{
+  trap "_daemon_stop 0" INT
+  rm -rf "$tmpdir"
+  mkdir -p "$tmpdir"
+
+  if [ -n "$opt_S" ] ; then
+    while read -r ln
+    do
+      process_one_line "$ln"
+    done
+    _daemon_stop 0
+  else
+    while true ; do
+      mkfifo "$tmpout" "$tmpin"
+      #                                   evil in/out workaround
+      socat UNIX-LISTEN:"$sockfile" EXEC:"sh -c 'cat<\"\$1\"&cat>\"\$2\";wait' sh '$tmpin' '$tmpout'" &
+      sockjob=$!
+      while read -r ln
+      do
+        process_one_line "$ln"
+      done < "$tmpout" > "$tmpin"
+      wait $sockjob
+      rm "$tmpout" "$tmpin"
+    done
+    _daemon_stop 1
+  fi
+}
+
+if [ $# -eq 0 ] ; then
+  usage
+  exit 1
+fi
+
+while getopts ":hti:dS:b:" opt;
 do
   case $opt in
     h) usage && exit 0 ;;
+    t) opt_t=y ;;
     i) [ "$OPTARG" -ge 0 ] 2>/dev/null || { error "i argument has to be positive" ; exit 2; }
        arg_i=$OPTARG ;;
+    d) opt_d=y ;;
+    S) sockfile="$OPTARG" ;;
     b) [ "$OPTARG" -ge 1 ] 2>/dev/null || { error "b argument has to be strictly positive" ; exit 2; }
        block_time=$OPTARG ;;
-    d) opt_d=y ;;
-    t) opt_t=y ;;
     \?) echo "Unknown option: $OPTARG" >&2 ; usage ; exit 1 ;;
     esac
 done
 
 shift $((OPTIND-1))
 
-mkdir -p "$FOLDER"
+# mkdir -p "$FOLDER"
+
+binreq socat
 
 if [ -n "$opt_d" ]
 then
+
+  if [ -S "$sockfile" ] ; then
+    echo "already running" >&2
+    exit 4
+  fi
   ## DAEMON
-  # reset status of all clicks
-  which bc >/dev/null || { echo "bc not installed" >&2 && exit 1; }
-  which xdotool >/dev/null || { echo "xdotool not installed" >&2 && exit 1; }
-  stime=$(echo "scale=2;$block_time/1000.0" | bc)
-  for I in "$FOLDER"/*
-  do
-    echo "0" > "$I" 2>/dev/null
-  done
-  # DAEMON
-  while true
-  do
-    sleep $stime &
-    for I in "$FOLDER"/*
-    do
-      interval=$(cat "$I")
-      click_id=$(echo "$I" | rev | cut -d'/' -f1 | rev)
-      if [ "$interval" != "0" ]
-      then
-        N=$(($block_time / $interval))
-        [ "$N" -lt 1 ] && N=1
-        xdotool click --repeat $N --delay $interval $click_id &
-      fi
-    done
-    wait $(jobs -p)
-  done
+  binreq bc xdotool xinput
+  daemon
 
 else
   ## CONTROL
+  [ ! -S "$sockfile" ] && echo "zclick daemon not running" >&2 && exit 3
+
   [ $# -le 0 ] && usage && exit 1
-  [ -n "$1" ] && ! [ "$1" -gt 0 ] 2>/dev/null && { error "Click ID has to be a strictly positive integer" ; exit 2; }
-  cid=$1
+
+  id=1
+  op=$1
+  if [ "$op" = "mod" ] ; then
+    [ "$#" -lt 2 ] && echo "$0 mod <device id>" && exit 1
+    id=$2
+  elif [ "$op" = "click" ] && [ "$#" -gt 1 ] ; then
+    id=$2
+  fi
 
   if [ -n "$opt_t" ]
   then
-    #toggle
-    if [ "$(cat "$FOLDER/$cid")" != "0" ] ; then
-      echo 0 > "$FOLDER/$cid"
-    else
-      echo "$arg_i" > "$FOLDER/$cid"
-    fi
-
-  else
-    #set
-    echo "$arg_i" > "$FOLDER/$cid"
+    # echo "get $op $id" | socat - UNIX-CONNECT:"$sockfile"
+    [ "$(echo "get $op $id" | socat - UNIX-CONNECT:"$sockfile")" -gt 0 ] && arg_i=0
+    while ! [ -S "$sockfile" ] ; do sleep 0.1 ; done
   fi
-
+  echo "$op $id $arg_i" | socat - UNIX-CONNECT:"$sockfile"
 fi
