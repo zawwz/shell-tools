@@ -12,6 +12,7 @@ JAVA_COMMAND=java
 JAVA_ARGUMENTS=-Xmx2G
 SERVER_ARGUMENTS=--nogui
 BACKUP_PATH=backup
+RESTART_TIMEOUT=300
 EOF
   exit 100
 fi
@@ -31,6 +32,8 @@ Backups do not work with bukkit and spigot
 Arguments:
   start             : Start server in background with screen
   startLocal        : Start server on the current console
+  stop              : Stop the background server
+  restart           : Restart the background server
   console           : Bring up the screen instance of the server  (C^a then d to leave)
   eraseCache        : Upgrade world and clear cached data
   backup [file]     : Make a world backup. If no file is specifed the current date is used as name
@@ -47,11 +50,15 @@ Arguments:
 }
 
 
+is_running() {
+  screen -ls | cut -sd'.' -f2 | awk '{print $1}' | grep -qw "$SCREEN_NAME"
+}
+
 # Functions
 
 start_server ()
 {
-  if screen -ls | cut -sd'.' -f2 | awk '{print $1}' | grep -qw "$SCREEN_NAME" # abort if server running
+  if is_running # abort if server running
   then
     echo "A screen under the name '$SCREEN_NAME' is already running" >&2
     return 1
@@ -66,6 +73,23 @@ attach () {
 
 stop_server () {
   screen -S "$SCREEN_NAME" -X stuff "^Mstop^M"
+}
+
+restart_server() {
+  echo "Stopping server"
+  stop_server
+  ts=$(date +%s)
+  while is_running
+  do
+    sleep 5
+    # took longer than 5 min to stop
+    if [ $(date +%s) -gt $((ts+${RESTART_TIMEOUT-300})) ] ; then
+      echo "Server did not stop" >&2
+      return 1
+    fi
+  done
+  echo "Server stopped, restarting"
+  start_server
 }
 
 eraseCache ()
@@ -145,6 +169,7 @@ case $1 in
   startLocal) $JAVA_COMMAND $JAVA_ARGUMENTS -jar "$JAR_FILE" $SERVER_ARGUMENTS ;;
   console)    attach ;;
   stop)       stop_server ;;
+  restart)    restart_server ;;
   eraseCache) eraseCache ;;
   backup)
     shift 1
