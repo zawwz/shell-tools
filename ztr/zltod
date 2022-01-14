@@ -64,7 +64,7 @@ then
 fi
 
 _LIST=$(lsblk -lnio NAME,LABEL | tr -s ' ')
-_SEARCH=$(echo "$_LIST" | grep $GREPARGS "$*" )
+_SEARCH=$(echo "$_LIST" | grep $GREPARGS "$*" ) || exit $?
 
 if [ -z "$_SEARCH" ] ## no result
 then
