@@ -131,7 +131,7 @@ echo_white "Preparing build files"
 if [ -d "build" ]
 then
   echo_yellow "Build files already present. Deleting and rebuilding"
-  rm -rd build
+  rm -r build
 fi
 mkdir -p build || abort $?
 cd build || abort $?
