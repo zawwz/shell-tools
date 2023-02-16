@@ -166,7 +166,7 @@ sinkinvolumeset()
 }
 sinkin_get_indexes()
 {
-  list_sink_inputs | grep -E "(^Sink Input #)|(application.process.binary = )" | grep -F "application.process.binary = \"$1\"" -B1 | grep '^Sink Input' | cut -d'#' -f2
+  list_sink_inputs | grep -E "(^Sink Input #)|(application.process.binary = )|(application.name = )" | grep -E "(application.process.binary = \"$1\")|(application.name = \"$1\")" -B2 | grep '^Sink Input' | cut -d'#' -f2
 }
 
 #############

@@ -1,0 +1,110 @@
+#!/bin/sh
+
+fname=$(basename $0)
+
+usage() {
+  echo "$fname [options] [path]"
+  echo 'Find the biggest size hog in given path
+
+  Options:
+    -h        Display help
+    -r <val>  Size ratio for continuation
+    -s        Print only size
+    -p        Print only path
+    -k        Print raw size (kbyte)
+  '
+}
+
+get_dirsize_list() {
+  du -d1 $1 2>/dev/null | sort -n
+}
+
+ratio=0.5
+unset opt_s opt_p opt_k
+
+duopt="xh"
+
+while getopts ":hr:spk" opt
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    r)
+      if [ -z "$OPTARG" ]
+      then
+        echo "r needs an argument" >/dev/stderr
+        exit 2
+      fi
+      ratio=$OPTARG
+      ;;
+    s)
+      opt_s=y
+      ;;
+    p)
+      opt_p=y
+      ;;
+    k)
+      duopt="x"
+      ;;
+    *)
+      echo "Unknown option: -$opt" >/dev/stderr
+      exit 2
+      ;;
+  esac
+done
+
+[ -z "$opt_p" ] && [ -z "$opt_s" ] && opt_p=y opt_s=y
+
+shift $((OPTIND-1))
+
+list=""
+pval=""
+nval=""
+cratio=""
+dest=""
+
+_step()
+{
+  list=$(get_dirsize_list $1)
+  if [ "$(echo "$list" | wc -l)" = "1" ]
+  then
+    cratio=""
+    return 0
+  fi
+  pval=$(echo "$list" | tail -n1)
+  nval=$(echo "$list" | tail -n2 | head -n1)
+  cratio=$(echo "scale=2;$(echo "$nval" | cut -f1)/$(echo "$pval" | cut -f1)" | bc 2>/dev/null)
+  dest=$(echo "$nval" | cut -f2- | xargs basename 2>/dev/null)
+}
+
+path="."
+[ -n "$1" ] && path=$1
+if ! [ -d $path ]
+then
+  echo "Invalid path" >/dev/stderr
+  exit 1
+fi
+
+_step $path
+
+while [ -n "$cratio" ] && [ "1" -eq "$(echo "$cratio >= $ratio" | bc)" ]
+do
+  path="$path/$dest"
+  _step $path
+done
+
+pval=$(get_dirsize_list $path | tail -n1)
+nval=$(find $path -maxdepth 1 -type f -printf '%s %p\n' | awk '{print int(($1+1023)/1024)"\t"$2}' | sort -n | tail -n1)
+cratio=$(echo "scale=2;$(echo "$nval" | cut -f1)/$(echo "$pval" | cut -f1)" | bc 2>/dev/null)
+
+if [ -n "$cratio" ] && [ "1" -eq "$(echo "$cratio >= $ratio" | bc)" ]
+then
+  path="$path/$(echo "$nval" | cut -f2- | xargs basename)"
+fi
+
+[ -n "$opt_p" ] && printf "%s " "$path" | sed 's|^\./||;s|/./|/|' | tr -s '/'
+[ -n "$opt_s" ] && printf "%s" "$(du -"$duopt"d0 "$path" | cut -f1)"
+printf "\n"
+

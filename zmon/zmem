@@ -1,0 +1,102 @@
+#!/bin/sh
+
+fname=$(basename $0)
+
+usage () {
+  echo "$fname [options]"
+  echo 'Display the most memory intensive processes
+memory pid process
+
+  Options:
+    -h        Display help
+    -n <int>  Top n processes. Default 10
+    -p <pid>  Operate on given process id
+    -m        Full memory map of processes, sorted by usage'
+}
+
+nmax=10
+unset process map
+
+while getopts ":hn:p:m" opt;
+do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    n)
+      if ! echo $OPTARG | grep -Eq '^[0-9]+$'
+      then
+        error "n argument has to be an integer"
+        exit 2
+      fi
+      if [ -z "$OPTARG" ]
+      then
+        error "n needs an argument"
+        exit 2
+      fi
+      if [ "$OPTARG" -lt 1 ]
+      then
+        error "n argument has to be greater than 0"
+        exit 2
+      fi
+      nmax=$OPTARG
+      ;;
+    p)
+      process=$OPTARG
+      ;;
+    m)
+      map=y
+      ;;
+    \?)
+    	echo "Uknown option: $OPTARG"
+      usage
+      exit 1
+    	;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+
+if [ -n "$process" ] ; then
+  LIST=$(ps -q $process -eo "rss,pid,comm" | tail -n1)
+else
+  LIST=$(ps -eo "rss,pid,comm" | tail -n+2 | sort -g | tail -n$nmax | tac)
+fi
+
+if [ -n "$map" ]
+then
+
+  plist=$(echo "$LIST" | awk '{print $2}')
+
+  flist=""
+
+  for i in $plist
+  do
+    if [ -z "$flist" ]
+    then
+      flist=$(pmap -x $i | tail -n+3 | head -n-2)
+    else
+      flist=$(printf "%s\n%s" "$flist" "$(pmap -x $i | tail -n+3 | head -n-2)")
+    fi
+  done
+
+  echo "$flist" | sort -nk3
+
+else
+
+  echo "$LIST" | awk '{
+  if(int($1/1048576)>0) {
+    p=int($1/1048576)"G"
+  }
+  else if(int($1/1024)>0) {
+    p=int($1/1024)"M"
+  }
+  else {
+    p=$1"K"
+  }
+  printf "%5s %5s %s\n", p, $2, $3
+  }'
+
+fi

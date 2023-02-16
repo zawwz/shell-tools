@@ -1,0 +1,96 @@
+#!/bin/bash
+
+[ "$DEBUG" = true ] && set -x
+
+usage() {
+  cat << EOF
+$0 <src> <dest>
+Fast SCP, wrapper script to SCP using tar
+
+Environment config:
+  COMPRESSION     Compression command. Default "gzip"
+EOF
+}
+
+ssh_exec() {
+  addr=$1
+  shift
+  if [ -n "$addr" ] ; then
+    ssh "$addr" exec "$(/usr/bin/printf "%q " "$@")"
+  else
+    exec "$@"
+  fi
+}
+
+srcscript='
+  set -e
+  path=$1
+  comp=$2
+  cw=$3
+  shift 3
+  cd "$(dirname "$path")"
+  name=$(basename "$path")
+  size=$(du -sb "$name" | cut -f1)
+  sleep 0.1
+  printf "%s\n" "$name"
+  sleep 0.1
+  if [ -d "$name" ] ; then
+    echo folder
+    cd "$name"
+    name=.
+  else
+    echo file
+  fi
+  sleep 0.1
+  exec "$@" "$name" | pv -s "$size" -fw $cw | $comp
+'
+
+dstscript='
+  set -e
+  path=$1
+  comp=$2
+  shift 3
+  name=$(head -n1)
+  type=$(head -n1)
+  if [ -d "$path" ] ; then
+    cd "$path"
+  else
+    cd "$(dirname "$path")"
+    name=$(basename "$path")
+  fi
+  if [ $type = folder ] ; then
+    mkdir -p "$name"
+    cd "$name"
+    $comp -d | "$@"
+  else
+    $comp -d | "$@" -O "$srcname" > "$name"
+  fi
+'
+
+# $1 = url , $2 = script , $3 = compression , $@ = script args
+wrapssh() {
+  path=$1
+  script=$2
+  comp=$3
+  remote=
+  shift 3
+  if [ "$path" != "${path#*:}" ] ; then
+    remote=${path%%:*}
+    path=${path#*:}
+  fi
+  ssh_exec "$remote" sh -c "$script" sh "$path" "$comp" $(/usr/bin/tput cols) "$@"
+}
+
+if [ $# -lt 2  -o  "$1" = "-h"  -o  "$1" = "--help" ] ; then
+  usage
+  exit 1
+fi
+
+src=$1
+dst=$2
+
+comp=${COMPRESSION-gzip}
+
+wrapssh "$src" "$srcscript" "$comp" tar -cf - |
+  wrapssh "$dst" "$dstscript" "$comp" tar -xf -
+

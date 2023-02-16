@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+[ "$DEBUG" = true ] && set -x
+set -e
+
+# $1 = addr
+ssh_exec() {
+  addr=$1
+  code=$2
+  shift 2
+  ssh "$addr" sh -c "$(/usr/bin/printf "%q " "$code")" sh "$(/usr/bin/printf "%q " "$@")"
+}
+
+
+BIND=${BIND}
+MAP=${MAP}
+REMOTE=${REMOTE-zawz@zsv}
+
+IMAGE=${IMAGE-gcc:10-buster}
+MODE=${MODE-docker}
+TARGET=${TARGET-$(basename "$PWD")}
+RESULT=${RESULT-$TARGET}
+RESULT_LOCAL=${RESULT_LOCAL-$RESULT}
+EXCLUDE=${EXCLUDE-obj}
+DOCKER_USER=${DOCKER_USER-$UID}
+
+volume_map=()
+while read -r I
+do
+  volume_map[N++]=--volume
+  volume_map[N++]=$I:$I:ro
+done < <(tr ',' '\n' <<< "$BIND")
+
+remotedir=$(ssh_exec "$REMOTE" 'mkdir -p "code/$1">/dev/null ; readlink -f "code/$1"' "$TARGET")
+while IFS=: read -r I J
+do
+  I=$(echo "$I" | sed "s|^\./|$remotedir/|g")
+  volume_map[N++]=--volume
+  volume_map[N++]=$I:$J:rw
+done < <(tr ',' '\n' <<< "$MAP")
+
+rsync -rvlpt --exclude="$EXCLUDE" -e ssh "$PWD/" "$REMOTE:code/$TARGET" >/dev/null
+if [ "$MODE" = docker ] ; then
+ssh_exec "$REMOTE" '
+  set -e
+  path=$1
+  user=$2
+  shift 2
+  cd "code/$path"
+  cat > .env
+  docker run --rm --user=$user \
+  --env-file=.env -w "/$path" \
+  --volume "$(pwd):/$path" \
+  "$@"
+  ' "$TARGET" "$DOCKER_USER" "${volume_map[@]}" "$IMAGE" "$@" < <(
+    for I in $ENVBIND ; do
+      echo "$I=${!I}"
+    done
+  )
+else
+ssh_exec "$REMOTE" '
+  path=$1
+  shift 1
+  cd "code/$path"
+  cat > env
+  . env
+  set -x
+  "$@"
+  ' "$target" "$@"
+fi
+
+mkdir -p "$(dirname "$RESULT_LOCAL")"
+scp "$REMOTE:code/$TARGET/$RESULT" "$RESULT_LOCAL"

@@ -85,7 +85,9 @@ domod()
     sleep $(echo "scale=3; $N*$interval/1000" | bc) &
     sleepjob=$!
     statedown=$(xinput query-state "$1" | grep -o '[1-9][0-9]*\]=down' | cut -d ']' -f1 | head -n1)
+    activewin=$(xdotool getactivewindow)
     for cid in $statedown ; do
+      xdotool mouseup --window $activewin $cid
       xdotool click --repeat $N --delay $2 "$cid" &
     done
     wait $sleepjob

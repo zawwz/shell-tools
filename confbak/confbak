@@ -1,0 +1,48 @@
+#!/bin/sh
+
+[ "$DEBUG" = true ] && set -x
+
+[ ! -f "${XDG_CONFIG_HOME-$HOME/.config}/confbak.conf" ] && exit 1
+
+. "${XDG_CONFIG_HOME-$HOME/.config}/confbak.conf"
+
+basedest=~
+if [ "$server" != "${server#*:}" ] ; then
+  basedest=${server#*:}
+  server=${server%%:*}
+fi
+
+HOSTNAME=$(cat /etc/hostname)
+if [ -z "$files" ] ; then
+  files="
+$HOSTNAME/etc:/etc:
+$HOSTNAME/config:$HOME/.config:
+$HOSTNAME/share:$HOME/.local/share:
+"
+fi
+
+# $1 = dest , $2 = extension
+compress_and_send() {
+  zstd -T0 | ssh "$server" "mkdir -p '$basedest/$(dirname "$1")' && cat > '$basedest/$1.zst'"
+}
+
+echo "$files" | while read -r ln ; do
+  [ -z "$ln" ] && continue
+  dest=$(echo "$ln" | cut -d: -f1)
+  folder=$(echo "$ln" | cut -d: -f2)
+  excludecmd=
+  for oneex in $(echo "$ln" | cut -d: -f3- | tr , '\n') ; do
+    excludecmd="$excludecmd --exclude=./$oneex"
+  done
+  (
+    cd "$folder"
+    sudo tar -cf - $excludecmd . | compress_and_send "$dest.tar"
+  )
+done
+
+echo "$cmds" | while read -r ln ; do
+  [ -z "$ln" ] && continue
+  dest=$(echo "$ln" | cut -d: -f1)
+  cmd=$(echo "$ln" | cut -d: -f2-)
+  sh -c "$cmd" | compress_and_send "$dest"
+done
